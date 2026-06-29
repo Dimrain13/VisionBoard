@@ -1,0 +1,20 @@
+import axios from "axios";
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+export const getDashboardSummary = () => axios.get(`${API}/dashboard/summary`);
+export const getAlerts = (params) => axios.get(`${API}/alerts`, { params });
+export const createAlert = (data) => axios.post(`${API}/alerts`, data);
+export const acknowledgeAlert = (id) => axios.put(`${API}/alerts/${id}/acknowledge`);
+export const deleteAlert = (id) => axios.delete(`${API}/alerts/${id}`);
+export const getCircuits = () => axios.get(`${API}/circuits`);
+export const createCircuit = (data) => axios.post(`${API}/circuits`, data);
+export const updateCircuit = (id, data) => axios.put(`${API}/circuits/${id}`, data);
+export const deleteCircuit = (id) => axios.delete(`${API}/circuits/${id}`);
+export const getTickets = (params) => axios.get(`${API}/tickets`, { params });
+export const createTicket = (data) => axios.post(`${API}/tickets`, data);
+export const updateTicket = (id, data) => axios.put(`${API}/tickets/${id}`, data);
+export const deleteTicket = (id) => axios.delete(`${API}/tickets/${id}`);
+export const getVendorStatus = () => axios.get(`${API}/vendor-status`);
+export const getSites = () => axios.get(`${API}/sites`);
+export const getSettings = () => axios.get(`${API}/settings`);
+export const updateSettings = (data) => axios.put(`${API}/settings`, data);
