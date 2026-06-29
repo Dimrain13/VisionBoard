@@ -1,87 +1,102 @@
 {
-  "theme": "dark",
-  "archetype": "7 (Electric & Neon - NOC Tactical Variant)",
-  "design_philosophy": "A high-contrast, data-dense command center interface. Optimized for 1920x1080 display on a Raspberry Pi TV monitor. Focus on scannability, critical alert visibility, and futuristic 'Cyberpunk/Terminal' aesthetics. Avoids distracting graphics in favor of glowing data points and strict grid alignments.",
+  "theme": {
+    "archetype": "Archetype 4: Swiss & High-Contrast (Modern Dark-First SaaS variant)",
+    "mode": "dark",
+    "description": "A calm, dark-first dashboard tailored for NOC (Network Operations Center) staff on a 1920x1080 Raspberry Pi display. It follows the 'Linear/Vercel' aesthetic with high information density, stark contrasts, no neon or CRT effects, and relies on subtle glassmorphism, 1px borders, and bento-box layouts to maintain an organized, premium feel."
+  },
   "colors": {
     "background": {
-      "base": "#050505",
-      "surface": "#0A0A0A",
-      "card": "rgba(10, 10, 10, 0.6)"
+      "default": "#09090B",
+      "surface": "#121214",
+      "surfaceHover": "#18181B",
+      "card": "#09090B",
+      "overlay": "rgba(0, 0, 0, 0.6)"
     },
     "text": {
-      "primary": "#FFFFFF",
-      "secondary": "#A0AEC0",
-      "muted": "#4A5568"
+      "primary": "#FAFAFA",
+      "secondary": "#A1A1AA",
+      "muted": "#71717A",
+      "inverse": "#09090B"
     },
-    "status": {
-      "nominal": "#00F0FF",
-      "nominal_bg": "rgba(0, 240, 255, 0.1)",
-      "warning": "#FFD700",
-      "warning_bg": "rgba(255, 215, 0, 0.1)",
-      "critical": "#FF003C",
-      "critical_bg": "rgba(255, 0, 60, 0.1)"
+    "accents": {
+      "brand": "#FFFFFF",
+      "success": "#22C55E",
+      "warning": "#F59E0B",
+      "error": "#EF4444",
+      "info": "#3B82F6"
     },
     "borders": {
-      "default": "rgba(0, 240, 255, 0.15)",
-      "highlight": "rgba(0, 240, 255, 0.5)"
+      "subtle": "#27272A",
+      "strong": "#3F3F46"
     }
   },
   "typography": {
-    "font_families": {
-      "headings": "'Rajdhani', sans-serif",
-      "body": "'Chivo', sans-serif",
-      "mono_data": "'JetBrains Mono', monospace"
+    "fontFamilies": {
+      "heading": "'Plus Jakarta Sans', sans-serif",
+      "body": "'Inter', sans-serif",
+      "mono": "'Geist Mono', 'JetBrains Mono', monospace"
     },
-    "scale": {
-      "h1": "text-4xl tracking-wider font-bold",
-      "h2": "text-2xl tracking-wide font-semibold",
-      "h3": "text-xl tracking-wide font-medium",
+    "sizes": {
+      "h1": "text-4xl tracking-tight font-medium leading-none",
+      "h2": "text-2xl tracking-tight font-medium leading-tight",
+      "h3": "text-xl font-medium",
       "body": "text-base",
-      "data_large": "text-3xl font-mono tracking-tight",
-      "labels": "text-xs uppercase tracking-[0.2em]"
+      "small": "text-sm",
+      "mono": "text-xs font-mono tracking-tight"
+    },
+    "rules": {
+      "headlines": "Use tight tracking. Avoid generic bolding; prefer font-medium.",
+      "numbers": "Use tabular-nums for tables, metrics, and KPI readouts to prevent layout shifts."
     }
   },
-  "layout_and_spacing": {
-    "grid_strategy": "Control Room Grid (Dense, rigid hierarchy). grid-cols-12 system.",
-    "spacing_scale": "Tight padding inside widgets (p-4 or p-6) to maximize data density. Generous gap (gap-6) between major dashboard modules.",
-    "card_style": "Terminal Retro-Futurism: Flat or slightly transparent background (bg-black/60), crisp 1px borders (border-cyan-500/20), NO soft drop shadows. Use CSS drop-shadow on text and lines for 'neon glow' instead of box-shadow."
+  "layout": {
+    "screen": "Fixed 1920x1080 resolution targeting a Raspberry Pi display. Mobile responsiveness is secondary, but use Tailwind grids for scalability.",
+    "structure": "Sidebar + Main Content area.",
+    "sidebar": "w-64 fixed left-0 top-0 h-full border-r border-zinc-800 bg-zinc-950/50 backdrop-blur-xl z-40",
+    "main": "ml-64 p-8 h-screen overflow-y-auto bg-[#09090B]",
+    "spacing": "Use p-6 or p-8 inside cards. gap-6 for main grid. Avoid cramped widgets."
   },
-  "motion_and_interactions": {
-    "map_lines": "Use framer-motion to animate SVG line paths (stroke-dasharray/stroke-dashoffset) connecting map locations.",
-    "critical_alerts": "Fast pulsing opacity animation for critical alerts (e.g., animate-pulse).",
-    "hover_states": "Interactive elements should increase border opacity and text brightness on hover."
+  "surfaces": {
+    "bento_cards": "bg-zinc-950/50 border border-zinc-800/50 rounded-xl backdrop-blur-sm shadow-sm overflow-hidden",
+    "glass_panel": "bg-black/40 backdrop-blur-2xl border border-white/10 rounded-2xl",
+    "table_row": "border-b border-zinc-800/50 hover:bg-zinc-900/30 transition-colors"
   },
-  "component_instructions": {
-    "global_wrapper": "Set a fixed resolution wrapper or use h-screen w-screen to ensure it locks to 1920x1080. Add the dark tactical grid texture as a very low-opacity background image.",
-    "header": "Top bar taking full width. Left: Company/NOC Logo or Name. Center: Live ticking digital clock (HH:MM:SS format in JetBrains Mono). Right: Global System Status Indicator.",
-    "map_widget": "Use `react-simple-maps` with a custom US TopoJSON URL (e.g., `https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json`). Filter to only show MI, OH, IN. Place glowing SVG markers at Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant/Warehouse), Middlebury IN. Connect them with glowing SVG <Line> elements.",
-    "vendor_status": "List of glowing badges/cards for CrowdStrike, NinjaOne, Zscaler, O365/D365. Use 'nominal' color for UP, 'critical' for DOWN.",
-    "wug_alerts": "Scrolling or fixed list of recent WUG email alerts. Severity dictates color (Yellow/Red).",
-    "dia_circuits": "Compact data table using JetBrains Mono for IPs/Status from HP Aruba.",
-    "tickets": "Vivantio ticket queue showing Open, In Progress, Critical ticket counts.",
-    "testing": "All interactive and key informational elements MUST include a `data-testid` attribute (e.g., `data-testid=\"map-node-remus\"`, `data-testid=\"status-zscaler\"`)."
-  },
-  "media": {
-    "images": [
-      {
-        "category": "background_texture",
-        "url": "https://images.pexels.com/photos/7599718/pexels-photo-7599718.jpeg",
-        "description": "Dark tactical grid texture to be used as a global background with opacity-10 and blend-overlay."
-      }
-    ],
-    "icons": {
-      "library": "lucide-react",
-      "usage": "Use crisp, minimalist icons. Avoid filled icons; stick to 1.5px or 2px stroke width."
+  "components": {
+    "KPI_Cards": {
+      "structure": "1 Primary Number (text-3xl), 1 Label (text-sm text-zinc-400), 1 Visual (Recharts sparkline or status indicator).",
+      "layout": "Grid col-span-1"
+    },
+    "Network_Map": {
+      "style": "Embedded dark-themed SVG or Map component (Recharts/react-simple-maps) covering MI, OH, IN. Use #27272A for landmass, glowing dots (success/error accents) for the 8 locations.",
+      "layout": "col-span-2 row-span-2 or full width section depending on grid."
+    },
+    "Vendor_Status": {
+      "style": "Minimal list. Vendor name on left, colored pulsing status dot on right.",
+      "vendors": ["CrowdStrike", "NinjaOne", "Zscaler", "O365/D365"]
+    },
+    "Tables": {
+      "style": "Dense tabular data for 'DIA Circuits' and 'Tickets'. Left-aligned headers, text-sm, tabular-nums for IPs/IDs."
     }
   },
-  "dependencies_to_add": [
-    "react-simple-maps",
-    "d3-geo",
-    "framer-motion",
-    "lucide-react",
-    "date-fns"
-  ],
-  "accessibility": {
-    "contrast": "Ensure pure white text over the dark background. Neon colors must only be used as accents or on text sizes > 18px to pass APCA contrast guidelines."
-  }
+  "motion": {
+    "hover": "Subtle border highlight (border-zinc-700) and -translate-y-[1px]. Fast transitions (150ms).",
+    "loading": "Use skeleton placeholders with shimmer animation (bg-zinc-800/50 animate-pulse).",
+    "status": "For operational/error states, use a tiny pulsing ring (ping animation) on the status dot."
+  },
+  "icons_and_assets": {
+    "library": "lucide-react",
+    "style": "Stroke width 1.5, size 20px for nav, 16px for inline.",
+    "map": "Instruct main agent to build a custom SVG map using react-simple-maps or D3 covering the US Midwest, or a stylized dot-matrix grid map."
+  },
+  "testing": {
+    "requirements": "All interactive elements (nav links, buttons) and key informational nodes (KPI values, status indicators, table rows) MUST include a 'data-testid' attribute using kebab-case role-based naming (e.g., 'nav-dashboard-link', 'kpi-alerts-value')."
+  },
+  "instructions_to_main_agent": [
+    "Strictly avoid any retro, neon, CRT, or terminal aesthetics. Build a high-end, clean SaaS dashboard.",
+    "Implement a responsive 12-column bento-grid layout for the Main Dashboard view.",
+    "Use 'lucide-react' for all icons.",
+    "Ensure the application strictly runs inside a Dark Mode context. Hardcode dark mode classes or set dark mode globally.",
+    "For charts (KPI sparklines), use 'recharts' with transparent backgrounds and minimalist axes.",
+    "For the Network Map, construct a clean, modern geographic representation of Michigan, Ohio, and Indiana. Use absolute positioned glowing dots for the 8 locations if a real map library is unavailable, overlaying a stylized subtle SVG."
+  ]
 }
