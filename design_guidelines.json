@@ -1,0 +1,87 @@
+{
+  "theme": "dark",
+  "archetype": "7 (Electric & Neon - NOC Tactical Variant)",
+  "design_philosophy": "A high-contrast, data-dense command center interface. Optimized for 1920x1080 display on a Raspberry Pi TV monitor. Focus on scannability, critical alert visibility, and futuristic 'Cyberpunk/Terminal' aesthetics. Avoids distracting graphics in favor of glowing data points and strict grid alignments.",
+  "colors": {
+    "background": {
+      "base": "#050505",
+      "surface": "#0A0A0A",
+      "card": "rgba(10, 10, 10, 0.6)"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A0AEC0",
+      "muted": "#4A5568"
+    },
+    "status": {
+      "nominal": "#00F0FF",
+      "nominal_bg": "rgba(0, 240, 255, 0.1)",
+      "warning": "#FFD700",
+      "warning_bg": "rgba(255, 215, 0, 0.1)",
+      "critical": "#FF003C",
+      "critical_bg": "rgba(255, 0, 60, 0.1)"
+    },
+    "borders": {
+      "default": "rgba(0, 240, 255, 0.15)",
+      "highlight": "rgba(0, 240, 255, 0.5)"
+    }
+  },
+  "typography": {
+    "font_families": {
+      "headings": "'Rajdhani', sans-serif",
+      "body": "'Chivo', sans-serif",
+      "mono_data": "'JetBrains Mono', monospace"
+    },
+    "scale": {
+      "h1": "text-4xl tracking-wider font-bold",
+      "h2": "text-2xl tracking-wide font-semibold",
+      "h3": "text-xl tracking-wide font-medium",
+      "body": "text-base",
+      "data_large": "text-3xl font-mono tracking-tight",
+      "labels": "text-xs uppercase tracking-[0.2em]"
+    }
+  },
+  "layout_and_spacing": {
+    "grid_strategy": "Control Room Grid (Dense, rigid hierarchy). grid-cols-12 system.",
+    "spacing_scale": "Tight padding inside widgets (p-4 or p-6) to maximize data density. Generous gap (gap-6) between major dashboard modules.",
+    "card_style": "Terminal Retro-Futurism: Flat or slightly transparent background (bg-black/60), crisp 1px borders (border-cyan-500/20), NO soft drop shadows. Use CSS drop-shadow on text and lines for 'neon glow' instead of box-shadow."
+  },
+  "motion_and_interactions": {
+    "map_lines": "Use framer-motion to animate SVG line paths (stroke-dasharray/stroke-dashoffset) connecting map locations.",
+    "critical_alerts": "Fast pulsing opacity animation for critical alerts (e.g., animate-pulse).",
+    "hover_states": "Interactive elements should increase border opacity and text brightness on hover."
+  },
+  "component_instructions": {
+    "global_wrapper": "Set a fixed resolution wrapper or use h-screen w-screen to ensure it locks to 1920x1080. Add the dark tactical grid texture as a very low-opacity background image.",
+    "header": "Top bar taking full width. Left: Company/NOC Logo or Name. Center: Live ticking digital clock (HH:MM:SS format in JetBrains Mono). Right: Global System Status Indicator.",
+    "map_widget": "Use `react-simple-maps` with a custom US TopoJSON URL (e.g., `https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json`). Filter to only show MI, OH, IN. Place glowing SVG markers at Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant/Warehouse), Middlebury IN. Connect them with glowing SVG <Line> elements.",
+    "vendor_status": "List of glowing badges/cards for CrowdStrike, NinjaOne, Zscaler, O365/D365. Use 'nominal' color for UP, 'critical' for DOWN.",
+    "wug_alerts": "Scrolling or fixed list of recent WUG email alerts. Severity dictates color (Yellow/Red).",
+    "dia_circuits": "Compact data table using JetBrains Mono for IPs/Status from HP Aruba.",
+    "tickets": "Vivantio ticket queue showing Open, In Progress, Critical ticket counts.",
+    "testing": "All interactive and key informational elements MUST include a `data-testid` attribute (e.g., `data-testid=\"map-node-remus\"`, `data-testid=\"status-zscaler\"`)."
+  },
+  "media": {
+    "images": [
+      {
+        "category": "background_texture",
+        "url": "https://images.pexels.com/photos/7599718/pexels-photo-7599718.jpeg",
+        "description": "Dark tactical grid texture to be used as a global background with opacity-10 and blend-overlay."
+      }
+    ],
+    "icons": {
+      "library": "lucide-react",
+      "usage": "Use crisp, minimalist icons. Avoid filled icons; stick to 1.5px or 2px stroke width."
+    }
+  },
+  "dependencies_to_add": [
+    "react-simple-maps",
+    "d3-geo",
+    "framer-motion",
+    "lucide-react",
+    "date-fns"
+  ],
+  "accessibility": {
+    "contrast": "Ensure pure white text over the dark background. Neon colors must only be used as accents or on text sizes > 18px to pass APCA contrast guidelines."
+  }
+}
