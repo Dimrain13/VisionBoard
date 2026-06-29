@@ -371,7 +371,7 @@ SITES_DATA = [
     {"id": "constantine", "name": "Constantine", "state": "MI", "coordinates": [-85.667, 41.841], "type": "office"},
     {"id": "novi", "name": "Novi", "state": "MI", "coordinates": [-83.476, 42.481], "type": "hq"},
     {"id": "canton-plant", "name": "Canton Plant", "state": "OH", "coordinates": [-81.378, 40.799], "type": "plant"},
-    {"id": "canton-warehouse", "name": "Canton WH", "state": "OH", "coordinates": [-81.390, 40.870], "type": "warehouse"},
+    {"id": "canton-warehouse", "name": "Canton Warehouse", "state": "OH", "coordinates": [-81.390, 40.870], "type": "warehouse"},
     {"id": "middlebury", "name": "Middlebury", "state": "IN", "coordinates": [-85.707, 41.676], "type": "office"},
 ]
 

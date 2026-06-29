@@ -116,7 +116,7 @@ export default function NetworkMap() {
                     {isHQ && <circle r={4} fill="#000" fillOpacity={0.5} />}
                     <text textAnchor="middle" y={-15}
                       style={{ fontSize: isHQ ? 11 : 9.5, fill: "rgba(255,255,255,0.9)", fontFamily: "JetBrains Mono, monospace", pointerEvents: "none", fontWeight: isHQ ? 700 : 400 }}>
-                      {site.name}
+                      {site.name.replace("Warehouse", "WH").replace("Pleasant", "Plsnt")}
                     </text>
                     <text textAnchor="middle" y={-5}
                       style={{ fontSize: 8, fill: sc, fontFamily: "JetBrains Mono, monospace", pointerEvents: "none" }}>
