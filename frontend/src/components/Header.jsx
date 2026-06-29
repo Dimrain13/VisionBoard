@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { format } from "date-fns";
-import { Activity } from "lucide-react";
 
 export default function Header() {
   const [time, setTime] = useState(new Date());
@@ -13,49 +12,35 @@ export default function Header() {
   return (
     <header
       data-testid="main-header"
-      className="h-16 border-b flex items-center px-6 flex-shrink-0"
-      style={{ background: "rgba(0,0,0,0.85)", borderColor: "rgba(0,240,255,0.15)" }}
+      className="h-12 flex items-center px-6 flex-shrink-0"
+      style={{ background: "rgba(9,9,11,0.95)", borderBottom: "1px solid #27272A" }}
     >
-      {/* Left */}
-      <div className="flex items-center gap-3 w-64">
-        <Activity size={18} style={{ color: "#00F0FF" }} strokeWidth={1.5} />
-        <span
-          className="text-lg font-bold tracking-widest uppercase"
-          style={{ fontFamily: "Rajdhani, sans-serif", color: "#fff", letterSpacing: "0.18em" }}
-        >
-          IT Command Center
-        </span>
-      </div>
+      {/* Left: breadcrumb placeholder */}
+      <div className="flex-1" />
 
       {/* Center: Clock */}
-      <div className="flex-1 flex flex-col items-center">
-        <div
+      <div className="flex items-center gap-3">
+        <span
           data-testid="live-clock"
-          className="text-2xl font-bold tracking-widest glow-cyan"
-          style={{ fontFamily: "JetBrains Mono, monospace", color: "#00F0FF" }}
+          className="tabular-nums text-sm font-medium"
+          style={{ fontFamily: "JetBrains Mono, monospace", color: "#A1A1AA" }}
         >
           {format(time, "HH:mm:ss")}
-        </div>
-        <div
-          className="text-xs tracking-wider mt-0.5"
-          style={{ fontFamily: "JetBrains Mono, monospace", color: "#4A5568" }}
-        >
-          {format(time, "EEE, MMM dd yyyy")} UTC{format(time, "xxx")}
-        </div>
+        </span>
+        <span className="text-xs" style={{ color: "#52525B" }}>
+          {format(time, "EEE, MMM dd yyyy")}
+        </span>
       </div>
 
-      {/* Right */}
-      <div className="flex items-center gap-3 w-64 justify-end" data-testid="system-status">
-        <div
-          className="w-2 h-2 rounded-full pulse-dot"
-          style={{ background: "#00F0FF" }}
-        />
-        <span
-          className="text-xs tracking-widest uppercase"
-          style={{ fontFamily: "JetBrains Mono, monospace", color: "#00F0FF" }}
-        >
-          System Online
-        </span>
+      {/* Right: status */}
+      <div className="flex-1 flex justify-end">
+        <div className="flex items-center gap-2" data-testid="system-status">
+          <div className="relative flex h-2 w-2">
+            <div className="absolute inline-flex h-full w-full rounded-full opacity-75 ping bg-emerald-400" />
+            <div className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+          </div>
+          <span className="text-xs" style={{ color: "#52525B" }}>Online</span>
+        </div>
       </div>
     </header>
   );

@@ -1,23 +1,39 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Bell, Network, Ticket, CheckCircle } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { Bell, Network, Ticket, Activity, AlertTriangle, CheckCircle, ArrowRight } from "lucide-react";
+import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
+import { Link } from "react-router-dom";
+import MapEmbed from "../components/MapEmbed";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const SEV_STYLE = {
-  critical: { border: "rgba(255,0,60,0.25)", bg: "rgba(255,0,60,0.05)", dot: "#FF003C", text: "#FF6B7A" },
-  warning:  { border: "rgba(255,215,0,0.25)", bg: "rgba(255,215,0,0.05)", dot: "#FFD700", text: "#FFD700" },
-  info:     { border: "rgba(0,240,255,0.2)",  bg: "rgba(0,240,255,0.05)", dot: "#00F0FF", text: "#00F0FF" },
+const SEV_CONFIG = {
+  critical: { bar: "alert-critical", text: "#F87171", badge: "badge-red",  label: "CRIT" },
+  warning:  { bar: "alert-warning",  text: "#FCD34D", badge: "badge-amber", label: "WARN" },
+  info:     { bar: "alert-info",     text: "#60A5FA", badge: "badge-blue",  label: "INFO" },
 };
 
-function KPI({ testId, label, value, sub, color }) {
-  const colors = { cyan: "#00F0FF", red: "#FF003C", yellow: "#FFD700", gray: "#6B7280" };
+const PRI_COLOR = { critical: "#F87171", high: "#FB923C", medium: "#FCD34D", low: "#71717A" };
+
+const VENDOR_STATUS = {
+  operational: { color: "#4ADE80", dot: "dot-online",   label: "OK" },
+  minor_outage: { color: "#FCD34D", dot: "dot-degraded", label: "MINOR" },
+  major_outage: { color: "#F87171", dot: "dot-offline",  label: "DOWN" },
+  unknown: { color: "#52525B", dot: "dot-unknown", label: "—" },
+};
+
+function KPICard({ testId, label, value, sub, color = "#FAFAFA", icon: Icon }) {
   return (
-    <div data-testid={testId} className="dash-card p-5">
-      <div className="text-xs uppercase tracking-widest mb-2" style={{ color: "#4A5568", fontFamily: "JetBrains Mono, monospace" }}>{label}</div>
-      <div className="text-4xl font-bold mb-1" style={{ fontFamily: "JetBrains Mono, monospace", color: colors[color] || colors.cyan }}>{value}</div>
-      {sub && <div className="text-xs" style={{ color: "#4A5568" }}>{sub}</div>}
+    <div data-testid={testId} className="card p-5">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-medium uppercase tracking-wider" style={{ color: "#52525B" }}>{label}</span>
+        {Icon && <Icon size={14} strokeWidth={1.5} style={{ color: "#3F3F46" }} />}
+      </div>
+      <div className="text-3xl font-semibold tabular-nums leading-none mb-2"
+        style={{ fontFamily: "Plus Jakarta Sans, sans-serif", color }}>
+        {value}
+      </div>
+      {sub && <div className="text-xs" style={{ color: "#52525B" }}>{sub}</div>}
     </div>
   );
 }
@@ -27,20 +43,23 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [tickets, setTickets] = useState([]);
+  const [sites, setSites] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const loadAll = useCallback(async () => {
     try {
-      const [s, a, v, t] = await Promise.all([
+      const [s, a, v, t, si] = await Promise.all([
         axios.get(`${API}/dashboard/summary`),
         axios.get(`${API}/alerts`, { params: { acknowledged: false } }),
         axios.get(`${API}/vendor-status`),
         axios.get(`${API}/tickets`),
+        axios.get(`${API}/sites`),
       ]);
       setSummary(s.data);
-      setAlerts(a.data.items.slice(0, 7));
+      setAlerts(a.data.items.slice(0, 6));
       setVendors(v.data);
       setTickets(t.data.items.slice(0, 5));
+      setSites(si.data);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
@@ -52,62 +71,88 @@ export default function Dashboard() {
   }, [loadAll]);
 
   if (loading) return (
-    <div className="h-full flex items-center justify-center">
-      <span className="cursor-blink" style={{ fontFamily: "JetBrains Mono, monospace", color: "#00F0FF", fontSize: 14 }}>LOADING SYSTEMS</span>
+    <div className="h-full flex flex-col gap-5">
+      <div className="grid grid-cols-4 gap-4">
+        {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-24 rounded-xl" />)}
+      </div>
+      <div className="flex-1 grid grid-cols-5 gap-4">
+        <div className="col-span-3 skeleton rounded-xl" />
+        <div className="col-span-2 skeleton rounded-xl" />
+      </div>
+      <div className="grid grid-cols-5 gap-4" style={{ height: 260 }}>
+        <div className="col-span-3 skeleton rounded-xl" />
+        <div className="col-span-2 skeleton rounded-xl" />
+      </div>
     </div>
   );
 
   const s = summary || {};
   const criticalVendors = vendors.filter(v => v.status === "major_outage").length;
+  const offlineSites = sites.filter(s => s.status === "offline").length;
 
   return (
     <div className="h-full flex flex-col gap-4">
-      {/* KPI Row */}
+
+      {/* ── Row 1: KPI ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-4 gap-4">
-        <KPI testId="kpi-active-alerts" label="Active Alerts" value={s.alerts?.unacknowledged ?? 0}
+        <KPICard testId="kpi-active-alerts" label="Active Alerts" icon={Bell}
+          value={s.alerts?.unacknowledged ?? 0}
           sub={`${s.alerts?.critical ?? 0} critical · ${s.alerts?.warning ?? 0} warning`}
-          color={s.alerts?.critical > 0 ? "red" : "yellow"} />
-        <KPI testId="kpi-circuits" label="DIA Circuits" value={`${s.circuits?.up ?? 0}/${s.circuits?.total ?? 0}`}
+          color={s.alerts?.critical > 0 ? "#F87171" : s.alerts?.warning > 0 ? "#FCD34D" : "#4ADE80"}
+        />
+        <KPICard testId="kpi-circuits" label="DIA Circuits Online" icon={Network}
+          value={`${s.circuits?.up ?? 0} / ${s.circuits?.total ?? 0}`}
           sub={`${s.circuits?.down ?? 0} down · ${s.circuits?.degraded ?? 0} degraded`}
-          color={s.circuits?.down > 0 ? "red" : s.circuits?.degraded > 0 ? "yellow" : "cyan"} />
-        <KPI testId="kpi-tickets" label="Open Tickets" value={(s.tickets?.open ?? 0) + (s.tickets?.in_progress ?? 0)}
-          sub={`${s.tickets?.critical ?? 0} critical priority`}
-          color={s.tickets?.critical > 0 ? "red" : "yellow"} />
-        <KPI testId="kpi-vendors" label="Vendor Health" value={`${vendors.filter(v => v.status === "operational").length}/${vendors.length}`}
-          sub={`${criticalVendors} with major issues`}
-          color={criticalVendors > 0 ? "red" : "cyan"} />
+          color={s.circuits?.down > 0 ? "#F87171" : s.circuits?.degraded > 0 ? "#FCD34D" : "#FAFAFA"}
+        />
+        <KPICard testId="kpi-tickets" label="Open Tickets" icon={Ticket}
+          value={(s.tickets?.open ?? 0) + (s.tickets?.in_progress ?? 0)}
+          sub={`${s.tickets?.critical ?? 0} critical · ${s.tickets?.open ?? 0} open`}
+          color={s.tickets?.critical > 0 ? "#F87171" : "#FAFAFA"}
+        />
+        <KPICard testId="kpi-vendors" label="Vendor Health" icon={Activity}
+          value={`${vendors.filter(v => v.status === "operational").length} / ${vendors.length}`}
+          sub={`${offlineSites} site${offlineSites !== 1 ? "s" : ""} offline`}
+          color={criticalVendors > 0 ? "#F87171" : "#FAFAFA"}
+        />
       </div>
 
-      {/* Middle Row */}
-      <div className="flex-1 grid grid-cols-3 gap-4 min-h-0">
-        {/* Alert list */}
-        <div className="col-span-2 dash-card p-4 flex flex-col min-h-0">
-          <div className="flex items-center justify-between mb-3">
-            <h2 style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 16, fontWeight: 600, color: "#fff", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-              Active Alerts
-            </h2>
-            <a href="/alerts" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#00F0FF" }}>VIEW ALL →</a>
+      {/* ── Row 2: Alerts + Vendor Status ─────────────────────────── */}
+      <div className="flex-1 grid grid-cols-5 gap-4 min-h-0">
+
+        {/* Alerts */}
+        <div className="col-span-3 card flex flex-col min-h-0">
+          <div className="card-header">
+            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Active Alerts</span>
+            <Link to="/alerts" className="flex items-center gap-1 text-xs" style={{ color: "#52525B", textDecoration: "none" }}
+              onMouseEnter={e => e.currentTarget.style.color = "#A1A1AA"}
+              onMouseLeave={e => e.currentTarget.style.color = "#52525B"}>
+              View all <ArrowRight size={11} />
+            </Link>
           </div>
-          <div className="flex-1 overflow-auto space-y-2">
+          <div className="flex-1 overflow-auto">
             {alerts.length === 0 ? (
-              <div className="text-center py-8" style={{ fontFamily: "JetBrains Mono, monospace", color: "#374151", fontSize: 12 }}>NO ACTIVE ALERTS</div>
+              <div className="h-full flex items-center justify-center">
+                <div className="flex flex-col items-center gap-2">
+                  <CheckCircle size={28} style={{ color: "#4ADE80" }} strokeWidth={1.5} />
+                  <span className="text-sm" style={{ color: "#52525B" }}>No active alerts</span>
+                </div>
+              </div>
             ) : alerts.map(alert => {
-              const st = SEV_STYLE[alert.severity] || SEV_STYLE.info;
+              const cfg = SEV_CONFIG[alert.severity] || SEV_CONFIG.info;
               return (
                 <div key={alert.id} data-testid={`alert-item-${alert.severity}`}
-                  className={`flex items-start gap-3 p-3 rounded text-sm ${alert.severity === "critical" && "pulse-critical"}`}
-                  style={{ border: `1px solid ${st.border}`, background: st.bg }}
-                >
-                  <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: st.dot }} />
+                  className={`flex items-start gap-3 px-5 py-3 table-row ${cfg.bar}`}
+                  style={{ background: "transparent" }}>
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate" style={{ color: st.text }}>{alert.title}</div>
-                    <div className="text-xs mt-0.5 flex items-center gap-2" style={{ color: "#4A5568", fontFamily: "JetBrains Mono, monospace" }}>
+                    <div className="text-sm font-medium truncate" style={{ color: "#E4E4E7" }}>{alert.title}</div>
+                    <div className="flex items-center gap-2 mt-0.5" style={{ fontSize: 11, color: "#52525B" }}>
                       {alert.site && <span>{alert.site}</span>}
-                      {alert.device && <><span>·</span><span>{alert.device}</span></>}
-                      <span>· {format(parseISO(alert.created_at), "HH:mm")}</span>
+                      {alert.device && <><span>·</span><span style={{ fontFamily: "JetBrains Mono, monospace" }}>{alert.device}</span></>}
+                      <span>· {formatDistanceToNowStrict(parseISO(alert.created_at), { addSuffix: true })}</span>
                     </div>
                   </div>
-                  <span className="text-xs uppercase flex-shrink-0" style={{ fontFamily: "JetBrains Mono, monospace", color: st.text }}>{alert.severity}</span>
+                  <span className={`badge ${cfg.badge} flex-shrink-0 mt-0.5`}>{cfg.label}</span>
                 </div>
               );
             })}
@@ -115,75 +160,87 @@ export default function Dashboard() {
         </div>
 
         {/* Vendor Status */}
-        <div className="dash-card p-4 flex flex-col min-h-0">
-          <h2 className="mb-3" style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 16, fontWeight: 600, color: "#fff", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-            Vendor Status
-          </h2>
-          <div className="flex-1 overflow-auto space-y-2">
-            {vendors.map(vendor => (
-              <div key={vendor.id} data-testid={`vendor-status-${vendor.id}`}
-                className="flex items-center justify-between p-2.5 rounded"
-                style={{ border: "1px solid rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.02)" }}
-              >
-                <span className="text-sm font-medium" style={{ color: "#D1D5DB" }}>{vendor.name}</span>
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${vendor.status !== "operational" && vendor.status !== "unknown" ? "pulse-dot" : ""}`}
-                    style={{ background: vendor.status === "operational" ? "#00F0FF" : vendor.status === "minor_outage" ? "#FFD700" : vendor.status === "major_outage" ? "#FF003C" : "#374151" }}
-                  />
-                  <span className="text-xs uppercase" style={{
-                    fontFamily: "JetBrains Mono, monospace",
-                    color: vendor.status === "operational" ? "#00F0FF" : vendor.status === "minor_outage" ? "#FFD700" : vendor.status === "major_outage" ? "#FF003C" : "#6B7280"
-                  }}>
-                    {vendor.status === "operational" ? "OK" : vendor.status === "minor_outage" ? "MINOR" : vendor.status === "major_outage" ? "DOWN" : "?"}
-                  </span>
+        <div className="col-span-2 card flex flex-col min-h-0">
+          <div className="card-header">
+            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Vendor Status</span>
+            <Link to="/status" className="flex items-center gap-1 text-xs" style={{ color: "#52525B", textDecoration: "none" }}
+              onMouseEnter={e => e.currentTarget.style.color = "#A1A1AA"}
+              onMouseLeave={e => e.currentTarget.style.color = "#52525B"}>
+              Details <ArrowRight size={11} />
+            </Link>
+          </div>
+          <div className="flex-1 overflow-auto">
+            {vendors.map(vendor => {
+              const cfg = VENDOR_STATUS[vendor.status] || VENDOR_STATUS.unknown;
+              return (
+                <div key={vendor.id} data-testid={`vendor-status-${vendor.id}`}
+                  className="flex items-center justify-between px-5 py-3 table-row">
+                  <span className="text-sm" style={{ color: "#D4D4D8" }}>{vendor.name}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex h-2 w-2">
+                      {vendor.status !== "operational" && vendor.status !== "unknown" && (
+                        <div className={`absolute inline-flex h-full w-full rounded-full opacity-75 ping ${cfg.dot}`} />
+                      )}
+                      <div className={`relative inline-flex rounded-full h-2 w-2 ${cfg.dot}`} />
+                    </div>
+                    <span className="text-xs tabular-nums" style={{ fontFamily: "JetBrains Mono, monospace", color: cfg.color }}>{cfg.label}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {/* Bottom Row */}
-      <div className="grid grid-cols-2 gap-4" style={{ height: 160 }}>
-        {/* Recent Tickets */}
-        <div className="dash-card p-4 overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between mb-2">
-            <h2 style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 15, fontWeight: 600, color: "#fff", letterSpacing: "0.1em", textTransform: "uppercase" }}>Recent Tickets</h2>
-            <a href="/tickets" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#00F0FF" }}>VIEW ALL →</a>
+      {/* ── Row 3: Network Map + Tickets ───────────────────────────── */}
+      <div className="grid grid-cols-5 gap-4" style={{ height: 270 }}>
+
+        {/* Map */}
+        <div className="col-span-3 card overflow-hidden flex flex-col">
+          <div className="card-header py-3">
+            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Network Map</span>
+            <div className="flex items-center gap-4" style={{ fontSize: 11, color: "#52525B" }}>
+              {[["#22C55E", "Online"], ["#F59E0B", "Degraded"], ["#EF4444", "Offline"]].map(([c, l]) => (
+                <span key={l} className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: c }} />{l}
+                </span>
+              ))}
+              <Link to="/map" className="flex items-center gap-1 ml-2" style={{ color: "#52525B", textDecoration: "none" }}
+                onMouseEnter={e => e.currentTarget.style.color = "#A1A1AA"}
+                onMouseLeave={e => e.currentTarget.style.color = "#52525B"}>
+                Full view <ArrowRight size={10} />
+              </Link>
+            </div>
           </div>
-          <div className="overflow-auto space-y-1.5 flex-1">
-            {tickets.map(t => (
-              <div key={t.id} data-testid={`ticket-item-${t.id}`} className="flex items-center gap-3 text-sm">
-                <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#374151", flexShrink: 0 }}>{t.ticket_number}</span>
-                <span className="truncate flex-1" style={{ color: "#9CA3AF" }}>{t.title}</span>
-                <span className="flex-shrink-0 text-xs uppercase" style={{
-                  fontFamily: "JetBrains Mono, monospace",
-                  color: t.priority === "critical" ? "#FF003C" : t.priority === "high" ? "#F97316" : t.priority === "medium" ? "#FFD700" : "#6B7280"
-                }}>{t.priority}</span>
-              </div>
-            ))}
+          <div className="flex-1 overflow-hidden">
+            <MapEmbed sites={sites} />
           </div>
         </div>
 
-        {/* Circuit Overview */}
-        <div className="dash-card p-4 overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between mb-2">
-            <h2 style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 15, fontWeight: 600, color: "#fff", letterSpacing: "0.1em", textTransform: "uppercase" }}>Circuit Overview</h2>
-            <a href="/circuits" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#00F0FF" }}>VIEW ALL →</a>
+        {/* Recent Tickets */}
+        <div className="col-span-2 card flex flex-col">
+          <div className="card-header py-3">
+            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Recent Tickets</span>
+            <Link to="/tickets" className="flex items-center gap-1 text-xs" style={{ color: "#52525B", textDecoration: "none" }}
+              onMouseEnter={e => e.currentTarget.style.color = "#A1A1AA"}
+              onMouseLeave={e => e.currentTarget.style.color = "#52525B"}>
+              View all <ArrowRight size={11} />
+            </Link>
           </div>
-          <div className="flex-1 flex items-center">
-            <div className="grid grid-cols-3 gap-4 w-full">
-              {[
-                { label: "Up", val: s.circuits?.up ?? 0, color: "#00F0FF" },
-                { label: "Degraded", val: s.circuits?.degraded ?? 0, color: "#FFD700" },
-                { label: "Down", val: s.circuits?.down ?? 0, color: "#FF003C" },
-              ].map(({ label, val, color }) => (
-                <div key={label} className="text-center">
-                  <div className="text-3xl font-bold" style={{ fontFamily: "JetBrains Mono, monospace", color }}>{val}</div>
-                  <div className="text-xs uppercase tracking-widest mt-1" style={{ color: "#4A5568" }}>{label}</div>
+          <div className="flex-1 overflow-auto">
+            {tickets.map(t => (
+              <div key={t.id} data-testid={`ticket-item-${t.id}`}
+                className="flex items-center gap-3 px-5 py-3 table-row">
+                <div className="w-1 h-7 rounded-full flex-shrink-0"
+                  style={{ background: PRI_COLOR[t.priority] || "#3F3F46" }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm truncate" style={{ color: "#D4D4D8" }}>{t.title}</div>
+                  <div className="text-xs mt-0.5" style={{ color: "#52525B", fontFamily: "JetBrains Mono, monospace" }}>
+                    {t.ticket_number} · {t.status.replace("_", " ")}
+                  </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>

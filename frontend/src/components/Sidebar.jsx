@@ -1,61 +1,62 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Map, Bell, ShieldCheck, Network, Ticket, Settings } from "lucide-react";
+import { LayoutDashboard, Map, Bell, ShieldCheck, Network, Ticket, Settings, Activity } from "lucide-react";
 
-const NAV_ITEMS = [
+const NAV = [
   { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { path: "/map",       icon: Map,            label: "Map" },
-  { path: "/alerts",    icon: Bell,           label: "Alerts" },
-  { path: "/status",    icon: ShieldCheck,    label: "Vendors" },
-  { path: "/circuits",  icon: Network,        label: "Circuits" },
-  { path: "/tickets",   icon: Ticket,         label: "Tickets" },
-  { path: "/settings",  icon: Settings,       label: "Settings" },
+  { path: "/map",       icon: Map,             label: "Network Map" },
+  { path: "/alerts",    icon: Bell,            label: "Alerts" },
+  { path: "/status",    icon: ShieldCheck,     label: "Vendor Status" },
+  { path: "/circuits",  icon: Network,         label: "DIA Circuits" },
+  { path: "/tickets",   icon: Ticket,          label: "Tickets" },
+  { path: "/settings",  icon: Settings,        label: "Settings" },
 ];
 
 export default function Sidebar() {
   return (
-    <nav
+    <aside
       data-testid="sidebar"
-      className="w-[72px] h-screen flex flex-col items-center pt-3 pb-4 flex-shrink-0"
-      style={{ background: "rgba(0,0,0,0.92)", borderRight: "1px solid rgba(0,240,255,0.12)" }}
+      className="w-56 h-screen flex flex-col flex-shrink-0"
+      style={{ background: "rgba(9,9,11,0.95)", borderRight: "1px solid #27272A" }}
     >
       {/* Logo */}
-      <div className="mb-5 flex items-center justify-center">
-        <div
-          className="w-9 h-9 flex items-center justify-center"
-          style={{ border: "1px solid rgba(0,240,255,0.35)", borderRadius: 3 }}
-        >
-          <div
-            className="w-3 h-3 rounded-sm"
-            style={{ background: "#00F0FF", boxShadow: "0 0 8px #00F0FF" }}
-          />
+      <div className="px-5 py-4 flex items-center gap-3" style={{ borderBottom: "1px solid #27272A" }}>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <Activity size={15} className="text-white" strokeWidth={2} />
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-white leading-tight" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>
+            IT Command
+          </div>
+          <div className="text-xs leading-tight" style={{ color: "#52525B" }}>Operations Center</div>
         </div>
       </div>
 
-      {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
-        <NavLink
-          key={path}
-          to={path}
-          data-testid={`nav-${label.toLowerCase()}`}
-          className={({ isActive }) =>
-            `w-full flex flex-col items-center py-3 gap-1 transition-all duration-150 ${
-              isActive ? "nav-active" : ""
-            }`
-          }
-          style={({ isActive }) =>
-            isActive
-              ? {}
-              : { color: "#4A5568", borderRight: "2px solid transparent" }
-          }
-          onMouseEnter={e => { if (!e.currentTarget.classList.contains("nav-active")) e.currentTarget.style.color = "#9CA3AF"; }}
-          onMouseLeave={e => { if (!e.currentTarget.classList.contains("nav-active")) e.currentTarget.style.color = "#4A5568"; }}
-        >
-          <Icon size={17} strokeWidth={1.5} />
-          <span style={{ fontSize: "9px", textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "JetBrains Mono, monospace" }}>
-            {label}
+      {/* Nav */}
+      <nav className="flex-1 p-3 space-y-0.5">
+        {NAV.map(({ path, icon: Icon, label }) => (
+          <NavLink
+            key={path}
+            to={path}
+            data-testid={`nav-${label.toLowerCase().replace(/\s+/g, "-")}`}
+            className={({ isActive }) => `nav-item ${isActive ? "nav-item-active" : ""}`}
+          >
+            <Icon size={16} strokeWidth={1.5} className="flex-shrink-0" />
+            <span>{label}</span>
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* Footer */}
+      <div className="px-5 py-4" style={{ borderTop: "1px solid #27272A" }}>
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
+          <span className="text-xs" style={{ color: "#52525B", fontFamily: "JetBrains Mono, monospace" }}>
+            All systems nominal
           </span>
-        </NavLink>
-      ))}
-    </nav>
+        </div>
+      </div>
+    </aside>
   );
 }
