@@ -8,6 +8,7 @@ import ServiceStatus from "./pages/ServiceStatus";
 import DIACircuits from "./pages/DIACircuits";
 import Tickets from "./pages/Tickets";
 import Settings from "./pages/Settings";
+import UniFiEvents from "./pages/UniFiEvents";
 import "./App.css";
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/status" element={<ServiceStatus />} />
           <Route path="/circuits" element={<DIACircuits />} />
           <Route path="/tickets" element={<Tickets />} />
+          <Route path="/unifi" element={<UniFiEvents />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>

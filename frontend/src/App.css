@@ -1,128 +1,177 @@
-/* ── Card System ──────────────────────────────────────────── */
+/* ─── PRECISION COMMAND CENTER ─────────────────────────────────────── */
+
+/* Card System – Zero radius, sharp */
 .card {
-  background: #111113;
-  border: 1px solid #27272A;
-  border-radius: 12px;
+  background: #0E0E10;
+  border: 1px solid #1F1F23;
+  border-radius: 0;
   overflow: hidden;
-  transition: border-color 150ms ease;
+  transition: border-color 120ms ease;
 }
-.card:hover { border-color: #3F3F46; }
+.card:hover { border-color: #2A2A2E; }
 
 .card-header {
-  padding: 14px 20px;
-  border-bottom: 1px solid #27272A;
+  padding: 10px 16px;
+  border-bottom: 1px solid #1A1A1E;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
+  background: #09090B;
 }
+.card-body { padding: 16px; }
 
-.card-body {
-  padding: 16px 20px;
-}
-
-/* ── Sidebar ──────────────────────────────────────────────── */
+/* ─── Sidebar ──────────────────────────────────────────────────────── */
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13.5px;
+  gap: 14px;
+  padding: 9px 24px;
+  font-size: 10px;
   font-weight: 500;
-  color: #71717A;
+  color: #3F3F46;
   text-decoration: none;
-  transition: color 120ms ease, background 120ms ease;
+  transition: color 120ms ease, border-left-color 120ms ease, background 120ms ease;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border-left: 2px solid transparent;
+  white-space: nowrap;
 }
-.nav-item:hover { color: #D4D4D8; background: rgba(255,255,255,0.05); }
-.nav-item-active { color: #FAFAFA; background: rgba(255,255,255,0.08); }
+.nav-item:hover { color: #71717A; border-left-color: #27272A; }
+.nav-item-active {
+  color: #FAFAFA;
+  border-left-color: #FAFAFA;
+  background: rgba(255,255,255,0.025);
+}
 
-/* ── Buttons ──────────────────────────────────────────────── */
+/* ─── Buttons ─────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  font-size: 13px;
+  padding: 5px 12px;
+  font-size: 10px;
   font-weight: 500;
-  border-radius: 8px;
-  border: 1px solid #3F3F46;
-  color: #A1A1AA;
+  border-radius: 0;
+  border: 1px solid #27272A;
+  color: #52525B;
   background: transparent;
   cursor: pointer;
   transition: all 120ms ease;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
-.btn:hover { color: #FAFAFA; background: rgba(255,255,255,0.05); border-color: #52525B; }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-primary { border-color: #3B82F6; color: #60A5FA; }
-.btn-primary:hover { background: rgba(59,130,246,0.1); border-color: #60A5FA; color: #93C5FD; }
+.btn:hover { color: #A1A1AA; background: rgba(255,255,255,0.03); border-color: #3F3F46; }
+.btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-primary {
+  border-color: #3F3F46;
+  color: #D4D4D8;
+  background: rgba(255,255,255,0.05);
+}
+.btn-primary:hover { background: rgba(255,255,255,0.09); border-color: #52525B; color: #FAFAFA; }
+.btn-danger { border-color: rgba(239,68,68,0.25); color: #F87171; }
+.btn-danger:hover { background: rgba(239,68,68,0.07); border-color: rgba(239,68,68,0.4); }
 
-/* ── Status Pills ─────────────────────────────────────────── */
-.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; font-family: 'JetBrains Mono', monospace; }
-.badge-green { background: rgba(34,197,94,0.1); color: #4ADE80; border: 1px solid rgba(34,197,94,0.2); }
-.badge-amber { background: rgba(245,158,11,0.1); color: #FCD34D; border: 1px solid rgba(245,158,11,0.2); }
-.badge-red   { background: rgba(239,68,68,0.1);  color: #F87171; border: 1px solid rgba(239,68,68,0.2); }
-.badge-blue  { background: rgba(59,130,246,0.1); color: #60A5FA; border: 1px solid rgba(59,130,246,0.2); }
-.badge-zinc  { background: rgba(113,113,122,0.1);color: #A1A1AA; border: 1px solid rgba(113,113,122,0.2); }
+/* ─── Badges / Status Pills ──────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 0;
+  font-size: 9.5px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border: 1px solid;
+}
+.badge-green { background: rgba(16,185,129,0.07);  color: #34D399; border-color: rgba(16,185,129,0.18); }
+.badge-amber { background: rgba(245,158,11,0.07);  color: #FBBF24; border-color: rgba(245,158,11,0.18); }
+.badge-red   { background: rgba(239,68,68,0.07);   color: #F87171; border-color: rgba(239,68,68,0.18); }
+.badge-blue  { background: rgba(10,132,255,0.07);  color: #60A5FA; border-color: rgba(10,132,255,0.18); }
+.badge-zinc  { background: rgba(82,82,91,0.07);    color: #71717A; border-color: rgba(82,82,91,0.18); }
 
-/* ── Inputs ───────────────────────────────────────────────── */
+/* ─── Inputs ──────────────────────────────────────────────────────── */
 .input {
   width: 100%;
-  background: #18181B;
-  border: 1px solid #27272A;
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
+  background: #09090B;
+  border: 1px solid #1F1F23;
+  border-radius: 0;
+  padding: 7px 12px;
+  font-size: 11.5px;
   color: #FAFAFA;
-  font-family: 'Inter', sans-serif;
+  font-family: 'JetBrains Mono', monospace;
   outline: none;
   transition: border-color 120ms ease;
 }
-.input:focus { border-color: #52525B; }
-.input::placeholder { color: #52525B; }
+.input:focus { border-color: #3F3F46; }
+.input::placeholder { color: #27272A; }
 
-/* ── Status Dot with ping ─────────────────────────────────── */
-.dot-online  { background: #22C55E; }
+/* ─── Status Squares (not circles) ──────────────────────────────── */
+.dot-online   { background: #10B981; }
 .dot-degraded { background: #F59E0B; }
 .dot-offline  { background: #EF4444; }
-.dot-unknown  { background: #52525B; }
+.dot-unknown  { background: #27272A; }
 
 @keyframes ping {
-  75%, 100% { transform: scale(2.2); opacity: 0; }
+  75%, 100% { transform: scale(2.5); opacity: 0; }
 }
-.ping { animation: ping 1.5s cubic-bezier(0,0,0.2,1) infinite; }
+.ping { animation: ping 2s cubic-bezier(0,0,0.2,1) infinite; }
 
-/* ── Loading skeleton ─────────────────────────────────────── */
+/* ─── Alert Severity Left Bars ───────────────────────────────────── */
+.alert-critical { border-left: 2px solid #EF4444; }
+.alert-warning  { border-left: 2px solid #F59E0B; }
+.alert-info     { border-left: 2px solid #0A84FF; }
+
+/* ─── Table Rows ─────────────────────────────────────────────────── */
+.table-row {
+  border-bottom: 1px solid rgba(31,31,35,0.9);
+  transition: background 120ms ease;
+}
+.table-row:hover { background: rgba(255,255,255,0.016); }
+
+/* ─── Loading Skeleton ───────────────────────────────────────────── */
 @keyframes shimmer {
   0%   { background-position: -600px 0; }
   100% { background-position: 600px 0; }
 }
 .skeleton {
-  background: linear-gradient(90deg, #18181B 25%, #27272A 50%, #18181B 75%);
+  background: linear-gradient(90deg, #0E0E10 25%, #18181B 50%, #0E0E10 75%);
   background-size: 600px 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: 8px;
+  animation: shimmer 1.6s infinite;
 }
 
-/* ── Alert severity bars ──────────────────────────────────── */
-.alert-critical { border-left: 3px solid #EF4444; }
-.alert-warning  { border-left: 3px solid #F59E0B; }
-.alert-info     { border-left: 3px solid #3B82F6; }
-
-/* ── Table ────────────────────────────────────────────────── */
-.table-row {
-  border-bottom: 1px solid rgba(39,39,42,0.5);
-  transition: background 120ms ease;
-}
-.table-row:hover { background: rgba(255,255,255,0.025); }
-
-/* ── Modal backdrop ───────────────────────────────────────── */
+/* ─── Modal Backdrop ─────────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.7);
-  backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 50;
+}
+
+/* ─── Section Label ─────────────────────────────────────────────── */
+.section-label {
+  font-size: 9.5px;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: #3F3F46;
+}
+
+/* ─── Data Table Headers ─────────────────────────────────────────── */
+.th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  color: #2E2E32;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  padding: 10px 16px;
+  border-bottom: 1px solid #1A1A1E;
+  text-align: left;
 }

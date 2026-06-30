@@ -59,6 +59,80 @@ class SettingsUpdate(BaseModel):
     vivantio_api_key: Optional[str] = None
     aruba_api_url: Optional[str] = None
     aruba_api_key: Optional[str] = None
+    unifi_syslog_port: Optional[int] = None
+    unifi_syslog_enabled: Optional[bool] = None
+
+# ─── UniFi Syslog ─────────────────────────────────────────────────
+def parse_unifi_syslog(raw: str) -> dict:
+    """Parse RFC3164 syslog from UniFi devices and classify severity."""
+    severity = "info"
+    pri_match = re.match(r'^<(\d+)>', raw)
+    if pri_match:
+        level = int(pri_match.group(1)) & 7  # 0=emerg … 7=debug
+        if level <= 3:
+            severity = "critical"
+        elif level == 4:
+            severity = "warning"
+
+    lower = raw.lower()
+    if any(k in lower for k in ["emerg", "crit", "attack", "intrusion", "brute"]):
+        severity = "critical"
+    elif any(k in lower for k in ["error", "fail", "block", "deny", "reject", "drop", "deauth", "disconnect", "unreachable"]):
+        if severity == "info":
+            severity = "warning"
+
+    # Extract hostname from RFC3164: <PRI>Mon DD HH:MM:SS HOSTNAME …
+    device = None
+    clean = re.sub(r'^<\d+>', '', raw).strip()
+    parts = clean.split()
+    if len(parts) >= 4:
+        device = parts[3]
+
+    # Strip timestamp prefix to get message
+    msg_match = re.match(r'^\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+(.*)', clean)
+    message = msg_match.group(1) if msg_match else clean
+
+    return {"severity": severity, "device": device, "message": message[:1000]}
+
+
+class UnifiSyslogProtocol(asyncio.DatagramProtocol):
+    """UDP datagram receiver for UniFi syslog traffic."""
+
+    def __init__(self, db_ref):
+        self.db = db_ref
+
+    def connection_made(self, transport):
+        self.transport = transport
+        logger.info("UniFi syslog UDP listener ready")
+
+    def datagram_received(self, data: bytes, addr: tuple):
+        try:
+            raw = data.decode("utf-8", errors="replace").strip()
+            if raw:
+                asyncio.ensure_future(self._store(raw, str(addr[0])))
+        except Exception as exc:
+            logger.warning(f"Syslog decode error: {exc}")
+
+    async def _store(self, raw: str, source_ip: str):
+        parsed = parse_unifi_syslog(raw)
+        doc = {
+            "id": str(uuid.uuid4()),
+            "raw": raw[:2000],
+            "source_ip": source_ip,
+            "severity": parsed["severity"],
+            "device": parsed.get("device"),
+            "message": parsed["message"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.db.unifi_events.insert_one(doc)
+        logger.info(f"UniFi [{parsed['severity'].upper()}] {source_ip} – {parsed['message'][:60]}")
+
+    def error_received(self, exc):
+        logger.warning(f"UniFi syslog protocol error: {exc}")
+
+    def connection_lost(self, _exc):
+        logger.info("UniFi syslog UDP listener closed")
+
 
 # ─── Vendor Status ────────────────────────────────────────────────
 VENDORS = [
@@ -153,8 +227,23 @@ async def seed_demo_data():
             "_id": "app_settings", "refresh_interval": 30, "email_enabled": False,
             "email_host": "", "email_port": 993, "email_username": "", "email_password": "",
             "email_folder": "INBOX", "wug_sender_filter": "whatsupgold",
-            "vivantio_api_url": "", "vivantio_api_key": "", "aruba_api_url": "", "aruba_api_key": ""
+            "vivantio_api_url": "", "vivantio_api_key": "", "aruba_api_url": "", "aruba_api_key": "",
+            "unifi_syslog_port": 5140, "unifi_syslog_enabled": True,
         })
+
+    if await db.unifi_events.count_documents({}) == 0:
+        unifi_seed = [
+            {"id": str(uuid.uuid4()), "raw": "<30>Jan  1 10:15:32 NOVI-UAP-PRO hostapd: STA aa:bb:cc:dd:ee:ff IEEE 802.11: authenticated", "source_ip": "192.168.1.100", "severity": "info",     "device": "NOVI-UAP-PRO",    "message": "hostapd: STA aa:bb:cc:dd:ee:ff IEEE 802.11: authenticated", "created_at": (now - timedelta(minutes=2)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<28>Jan  1 10:14:01 REMUS-UDM kernel: [WAN_LOCAL-default-D]IN=eth8 SRC=45.33.32.156 DST=203.0.113.1 PROTO=TCP DPT=22 DROP", "source_ip": "192.168.2.1", "severity": "warning",  "device": "REMUS-UDM",        "message": "kernel: [WAN_LOCAL-default-D] SRC=45.33.32.156 DST=203.0.113.1 PROTO=TCP DPT=22 DROP", "created_at": (now - timedelta(minutes=8)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<26>Jan  1 10:10:44 CONST-SW01 kernel: [WAN_IN-3-A]IN=eth8 OUT=eth0 SRC=10.0.0.1 DST=10.0.0.2 PROTO=UDP block", "source_ip": "192.168.3.1", "severity": "warning",  "device": "CONST-SW01",       "message": "kernel: [WAN_IN-3-A] SRC=10.0.0.1 DST=10.0.0.2 PROTO=UDP block", "created_at": (now - timedelta(minutes=15)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<134>Jan  1 10:05:12 NOVI-UDM mcad: ath0: STA 11:22:33:44:55:66 deauthenticated due to inactivity", "source_ip": "192.168.1.1", "severity": "info",     "device": "NOVI-UDM",         "message": "mcad: ath0: STA 11:22:33:44:55:66 deauthenticated due to inactivity", "created_at": (now - timedelta(minutes=20)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<0>Jan  1 10:00:00 CANTON-P-FW01 kernel: CRITICAL port scan detected 185.220.101.45 – 142 ports in 30s", "source_ip": "10.100.1.1",  "severity": "critical", "device": "CANTON-P-FW01",    "message": "kernel: CRITICAL port scan detected from 185.220.101.45 – 142 ports in 30s", "created_at": (now - timedelta(minutes=25)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<30>Jan  1 09:55:00 NOVI-UAP-PRO hostapd: STA cc:dd:ee:ff:00:11 IEEE 802.11: associated (AID 3)", "source_ip": "192.168.1.100", "severity": "info",     "device": "NOVI-UAP-PRO",    "message": "hostapd: STA cc:dd:ee:ff:00:11 IEEE 802.11: associated (AID 3)", "created_at": (now - timedelta(minutes=30)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<28>Jan  1 09:50:11 MT-PLEASANT-UDM firewall: deny SRC=203.0.113.99 DST=10.50.0.1 DPT=3389 DROP", "source_ip": "10.50.0.254",  "severity": "warning",  "device": "MT-PLEASANT-UDM",  "message": "firewall: deny SRC=203.0.113.99 DST=10.50.0.1 DPT=3389 DROP", "created_at": (now - timedelta(minutes=40)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<30>Jan  1 09:45:00 MIDDLEBURY-AP hostapd: STA ff:ee:dd:cc:bb:aa IEEE 802.11: disassociated", "source_ip": "10.80.0.10",   "severity": "info",     "device": "MIDDLEBURY-AP",    "message": "hostapd: STA ff:ee:dd:cc:bb:aa IEEE 802.11: disassociated", "created_at": (now - timedelta(minutes=50)).isoformat()},
+        ]
+        await db.unifi_events.insert_many(unifi_seed)
+
     logger.info("Demo data seeded")
 
 # ─── Background Tasks ─────────────────────────────────────────────
@@ -200,8 +289,25 @@ async def poll_email_for_alerts(settings: dict):
 async def lifespan(app: FastAPI):
     await seed_demo_data()
     email_task = asyncio.create_task(background_email_poller())
+
+    # Start UniFi syslog UDP listener
+    syslog_port = int(os.environ.get("UNIFI_SYSLOG_PORT", "5140"))
+    transport = None
+    try:
+        loop = asyncio.get_event_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: UnifiSyslogProtocol(db),
+            local_addr=("0.0.0.0", syslog_port),
+        )
+        logger.info(f"UniFi syslog listener active on UDP:{syslog_port}")
+    except Exception as exc:
+        logger.warning(f"Could not start UniFi syslog listener on UDP:{syslog_port} – {exc}")
+
     yield
+
     email_task.cancel()
+    if transport:
+        transport.close()
     try:
         await email_task
     except asyncio.CancelledError:
@@ -402,5 +508,18 @@ async def update_settings(data: SettingsUpdate):
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     await db.settings.update_one({"_id": "app_settings"}, {"$set": update_data}, upsert=True)
     return await db.settings.find_one({"_id": "app_settings"}, {"_id": 0, "email_password": 0})
+
+@api_router.get("/unifi-events")
+async def get_unifi_events(severity: str = None, limit: int = 200):
+    query = {}
+    if severity:
+        query["severity"] = severity
+    events = await db.unifi_events.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"items": events, "total": len(events)}
+
+@api_router.delete("/unifi-events")
+async def clear_unifi_events():
+    result = await db.unifi_events.delete_many({})
+    return {"deleted": result.deleted_count}
 
 app.include_router(api_router)

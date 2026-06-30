@@ -42,7 +42,7 @@ export default function Alerts() {
   return (
     <div className="h-full flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Alert Center</h1>
+        <h1 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.12em" }}>ALERT CENTER</h1>
         <button data-testid="add-alert-btn" onClick={() => { setForm(EMPTY); setShowForm(true); }} className="btn btn-primary">
           <Plus size={13} /> Add Alert
         </button>
@@ -52,8 +52,8 @@ export default function Alerts() {
       <div className="grid grid-cols-4 gap-3">
         {[["Unacknowledged", counts.unacked, "#FAFAFA"], ["Critical", counts.critical, "#F87171"], ["Warning", counts.warning, "#FCD34D"], ["Info", counts.info, "#60A5FA"]].map(([l, v, c]) => (
           <div key={l} className="card p-4 text-center">
-            <div className="text-3xl font-semibold tabular-nums" style={{ fontFamily: "Plus Jakarta Sans, sans-serif", color: c }}>{v}</div>
-            <div className="text-xs mt-1 uppercase tracking-wider" style={{ color: "#52525B" }}>{l}</div>
+            <div className="text-3xl font-semibold tabular-nums" style={{ fontFamily: "'JetBrains Mono', monospace", color: c }}>{v}</div>
+            <div className="section-label mt-1.5">{l}</div>
           </div>
         ))}
       </div>
@@ -122,7 +122,7 @@ export default function Alerts() {
         <div className="modal-backdrop">
           <div className="card p-6 w-full max-w-md" style={{ borderRadius: 16 }}>
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-base font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Add Alert</h3>
+              <h3 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.15em" }}>ADD ALERT</h3>
               <button onClick={() => setShowForm(false)} className="btn" style={{ padding: "4px 8px", borderColor: "transparent" }}><X size={16} /></button>
             </div>
             <div className="space-y-3">

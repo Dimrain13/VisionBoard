@@ -6,11 +6,11 @@ import { format, parseISO } from "date-fns";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const STATUS_CFG = {
-  operational: { label: "OPERATIONAL",  color: "#00F0FF", border: "rgba(0,240,255,0.25)",  bg: "rgba(0,240,255,0.04)",  dot: "#00F0FF" },
-  minor_outage: { label: "MINOR ISSUE", color: "#FFD700", border: "rgba(255,215,0,0.25)",  bg: "rgba(255,215,0,0.04)",  dot: "#FFD700" },
-  major_outage: { label: "MAJOR OUTAGE",color: "#FF003C", border: "rgba(255,0,60,0.3)",   bg: "rgba(255,0,60,0.05)",   dot: "#FF003C" },
-  maintenance:  { label: "MAINTENANCE", color: "#60A5FA", border: "rgba(96,165,250,0.25)", bg: "rgba(96,165,250,0.04)", dot: "#60A5FA" },
-  unknown:      { label: "UNKNOWN",     color: "#6B7280", border: "rgba(107,114,128,0.2)", bg: "rgba(107,114,128,0.04)",dot: "#374151" },
+  operational:  { label: "OPERATIONAL",  color: "#10B981", badge: "badge-green", dot: "dot-online"   },
+  minor_outage: { label: "MINOR ISSUE",  color: "#F59E0B", badge: "badge-amber", dot: "dot-degraded" },
+  major_outage: { label: "MAJOR OUTAGE", color: "#EF4444", badge: "badge-red",   dot: "dot-offline"  },
+  maintenance:  { label: "MAINTENANCE",  color: "#60A5FA", badge: "badge-blue",  dot: "dot-unknown"  },
+  unknown:      { label: "UNKNOWN",      color: "#27272A", badge: "badge-zinc",  dot: "dot-unknown"  },
 };
 
 export default function ServiceStatus() {
@@ -39,86 +39,112 @@ export default function ServiceStatus() {
 
   return (
     <div className="h-full flex flex-col gap-4">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 22, fontWeight: 700, color: "#fff", letterSpacing: "0.12em", textTransform: "uppercase" }}>
-          Vendor Service Status
-        </h1>
-        <div className="flex items-center gap-4">
-          <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#4A5568" }}>
-            Updated: {format(lastRefresh, "HH:mm:ss")}
+        <div>
+          <div className="section-label mb-1.5">Service Health</div>
+          <h1 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.12em" }}>
+            VENDOR STATUS
+          </h1>
+        </div>
+        <div className="flex items-center gap-3">
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: "#27272A", letterSpacing: "0.08em" }}>
+            CHK {format(lastRefresh, "HH:mm:ss")}
           </span>
-          <button data-testid="refresh-status-btn" onClick={() => load(true)} disabled={refreshing}
-            className="flex items-center gap-2 px-4 py-2 rounded text-sm transition-colors disabled:opacity-50"
-            style={{ border: "1px solid rgba(0,240,255,0.4)", color: "#00F0FF", fontFamily: "JetBrains Mono, monospace" }}
-            onMouseEnter={e => e.currentTarget.style.background = "rgba(0,240,255,0.08)"}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-          >
-            <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+          <button data-testid="refresh-status-btn" onClick={() => load(true)} disabled={refreshing} className="btn">
+            <RefreshCw size={10} className={refreshing ? "animate-spin" : ""} />
             {refreshing ? "CHECKING..." : "REFRESH"}
           </button>
         </div>
       </div>
 
-      {/* Overall banner */}
-      <div className="dash-card p-4 flex items-center gap-3" style={{ border: `1px solid ${oCfg.border}`, background: oCfg.bg }}>
-        <div className={`w-3 h-3 rounded-full ${overall !== "operational" ? "pulse-dot" : ""}`} style={{ background: oCfg.dot }} />
-        <span style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 18, fontWeight: 600, color: oCfg.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          {overall === "operational" ? "All Vendor Systems Operational"
-            : overall === "major_outage" ? "Major Service Disruption Detected"
-            : "Minor Service Issues Detected"}
+      {/* Overall status banner */}
+      <div className="card p-4 flex items-center gap-3" style={{ borderLeft: `2px solid ${oCfg.color}` }}>
+        <div className="relative flex" style={{ width: 8, height: 8 }}>
+          {overall !== "operational" && (
+            <div className={`absolute inline-flex opacity-75 ping ${oCfg.dot}`} style={{ width: 8, height: 8 }} />
+          )}
+          <div className={`relative inline-flex ${oCfg.dot}`} style={{ width: 8, height: 8 }} />
+        </div>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, color: oCfg.color, letterSpacing: "0.18em" }}>
+          {overall === "operational" ? "ALL VENDOR SYSTEMS OPERATIONAL"
+            : overall === "major_outage" ? "MAJOR SERVICE DISRUPTION DETECTED"
+            : "MINOR SERVICE ISSUES DETECTED"}
         </span>
       </div>
 
       {/* Vendor cards */}
       <div className="flex-1 overflow-auto">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-3">
           {loading ? (
-            [...Array(5)].map((_, i) => <div key={i} className="dash-card shimmer h-36" />)
+            [...Array(5)].map((_, i) => <div key={i} className="skeleton h-36" />)
           ) : vendors.map(vendor => {
             const cfg = STATUS_CFG[vendor.status] || STATUS_CFG.unknown;
             return (
               <div key={vendor.id} data-testid={`vendor-card-${vendor.id}`}
-                className="dash-card p-5" style={{ border: `1px solid ${cfg.border}`, background: cfg.bg }}>
-                <div className="flex items-start justify-between mb-3">
-                  <span style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 17, fontWeight: 600, color: "#fff", letterSpacing: "0.06em" }}>{vendor.name}</span>
-                  <a href={vendor.web_url} target="_blank" rel="noopener noreferrer" style={{ color: "#4A5568" }}
-                    onMouseEnter={e => e.currentTarget.style.color = "#00F0FF"}
-                    onMouseLeave={e => e.currentTarget.style.color = "#4A5568"}>
-                    <ExternalLink size={13} />
+                className="card p-5" style={{ borderLeft: `2px solid ${cfg.color}` }}>
+                <div className="flex items-start justify-between mb-4">
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600, color: "#D4D4D8", letterSpacing: "0.1em" }}>
+                    {vendor.name.toUpperCase()}
+                  </span>
+                  <a href={vendor.web_url} target="_blank" rel="noopener noreferrer"
+                    style={{ color: "#27272A" }}
+                    onMouseEnter={e => e.currentTarget.style.color = "#52525B"}
+                    onMouseLeave={e => e.currentTarget.style.color = "#27272A"}>
+                    <ExternalLink size={11} />
                   </a>
                 </div>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`w-2.5 h-2.5 rounded-full ${vendor.status !== "operational" ? "pulse-dot" : ""}`} style={{ background: cfg.dot }} />
-                  <span className="text-sm font-bold" style={{ fontFamily: "JetBrains Mono, monospace", color: cfg.color }}>{cfg.label}</span>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="relative flex" style={{ width: 7, height: 7 }}>
+                    {vendor.status !== "operational" && (
+                      <div className={`absolute inline-flex opacity-75 ping ${cfg.dot}`} style={{ width: 7, height: 7 }} />
+                    )}
+                    <div className={`relative inline-flex ${cfg.dot}`} style={{ width: 7, height: 7 }} />
+                  </div>
+                  <span className={`badge ${cfg.badge}`}>{cfg.label}</span>
                 </div>
-                <p className="text-xs leading-relaxed" style={{ color: "#6B7280" }}>{vendor.description}</p>
+                <p style={{ fontSize: 11, color: "#3F3F46", lineHeight: 1.6 }}>{vendor.description}</p>
                 {vendor.incidents?.length > 0 && (
                   <div className="mt-3 space-y-1">
                     {vendor.incidents.map((inc, i) => (
-                      <div key={i} className="text-xs pl-2" style={{ borderLeft: "2px solid rgba(255,215,0,0.5)", color: "#9CA3AF" }}>{inc.name}</div>
+                      <div key={i} style={{ fontSize: 10, paddingLeft: 8, borderLeft: "2px solid rgba(245,158,11,0.3)", color: "#52525B", fontFamily: "'JetBrains Mono', monospace" }}>
+                        {inc.name}
+                      </div>
                     ))}
                   </div>
                 )}
-                <div className="mt-3 text-xs" style={{ color: "#374151", fontFamily: "JetBrains Mono, monospace" }}>
-                  {vendor.last_checked ? format(parseISO(vendor.last_checked), "HH:mm:ss") : "—"}
+                <div style={{ marginTop: 12, fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: "#1F1F23", letterSpacing: "0.08em" }}>
+                  LAST {vendor.last_checked ? format(parseISO(vendor.last_checked), "HH:mm:ss") : "—"}
                 </div>
               </div>
             );
           })}
 
-          {/* IsItDown card */}
-          <div className="dash-card p-5" style={{ border: "1px solid rgba(167,139,250,0.25)", background: "rgba(167,139,250,0.04)" }}>
-            <div className="flex items-start justify-between mb-3">
-              <span style={{ fontFamily: "Rajdhani, sans-serif", fontSize: 17, fontWeight: 600, color: "#fff" }}>IsItDown.right</span>
-              <a href="https://www.isitdownright.now.com" target="_blank" rel="noopener noreferrer" style={{ color: "#4A5568" }}><ExternalLink size={13} /></a>
+          {/* IsItDown external tool card */}
+          <div className="card p-5">
+            <div className="flex items-start justify-between mb-4">
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600, color: "#D4D4D8", letterSpacing: "0.1em" }}>
+                ISITDOWN.RIGHT
+              </span>
+              <a href="https://www.isitdownright.now.com" target="_blank" rel="noopener noreferrer"
+                style={{ color: "#27272A" }}
+                onMouseEnter={e => e.currentTarget.style.color = "#52525B"}
+                onMouseLeave={e => e.currentTarget.style.color = "#27272A"}>
+                <ExternalLink size={11} />
+              </a>
             </div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-2.5 h-2.5 rounded-full" style={{ background: "#A78BFA" }} />
-              <span className="text-sm font-bold" style={{ fontFamily: "JetBrains Mono, monospace", color: "#A78BFA" }}>EXTERNAL TOOL</span>
+            <div className="flex items-center gap-2 mb-3">
+              <div style={{ width: 7, height: 7, background: "#60A5FA" }} />
+              <span className="badge badge-blue">EXTERNAL TOOL</span>
             </div>
-            <p className="text-xs leading-relaxed mb-3" style={{ color: "#6B7280" }}>Check if any website or service is down globally.</p>
+            <p style={{ fontSize: 11, color: "#3F3F46", lineHeight: 1.6 }}>
+              Check if any website or service is down globally from external perspective.
+            </p>
             <a data-testid="isitdown-link" href="https://www.isitdownright.now.com" target="_blank" rel="noopener noreferrer"
-              className="text-xs" style={{ fontFamily: "JetBrains Mono, monospace", color: "#A78BFA" }}>
+              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#27272A", letterSpacing: "0.1em", display: "block", marginTop: 12 }}
+              onMouseEnter={e => e.currentTarget.style.color = "#52525B"}
+              onMouseLeave={e => e.currentTarget.style.color = "#27272A"}>
               OPEN TOOL →
             </a>
           </div>

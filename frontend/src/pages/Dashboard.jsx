@@ -26,14 +26,14 @@ function KPICard({ testId, label, value, sub, color = "#FAFAFA", icon: Icon }) {
   return (
     <div data-testid={testId} className="card p-5">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium uppercase tracking-wider" style={{ color: "#52525B" }}>{label}</span>
-        {Icon && <Icon size={14} strokeWidth={1.5} style={{ color: "#3F3F46" }} />}
+        <span className="section-label">{label}</span>
+        {Icon && <Icon size={13} strokeWidth={1.5} style={{ color: "#1F1F23" }} />}
       </div>
-      <div className="text-3xl font-semibold tabular-nums leading-none mb-2"
-        style={{ fontFamily: "Plus Jakarta Sans, sans-serif", color }}>
+      <div className="tabular-nums leading-none mb-2"
+        style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 30, fontWeight: 600, color }}>
         {value}
       </div>
-      {sub && <div className="text-xs" style={{ color: "#52525B" }}>{sub}</div>}
+      {sub && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3F3F46", letterSpacing: "0.05em" }}>{sub}</div>}
     </div>
   );
 }
@@ -123,7 +123,7 @@ export default function Dashboard() {
         {/* Alerts */}
         <div className="col-span-3 card flex flex-col min-h-0">
           <div className="card-header">
-            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Active Alerts</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.15em" }}>ACTIVE ALERTS</span>
             <Link to="/alerts" className="flex items-center gap-1 text-xs" style={{ color: "#52525B", textDecoration: "none" }}
               onMouseEnter={e => e.currentTarget.style.color = "#A1A1AA"}
               onMouseLeave={e => e.currentTarget.style.color = "#52525B"}>
@@ -162,7 +162,7 @@ export default function Dashboard() {
         {/* Vendor Status */}
         <div className="col-span-2 card flex flex-col min-h-0">
           <div className="card-header">
-            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Vendor Status</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.15em" }}>VENDOR STATUS</span>
             <Link to="/status" className="flex items-center gap-1 text-xs" style={{ color: "#52525B", textDecoration: "none" }}
               onMouseEnter={e => e.currentTarget.style.color = "#A1A1AA"}
               onMouseLeave={e => e.currentTarget.style.color = "#52525B"}>
@@ -177,11 +177,11 @@ export default function Dashboard() {
                   className="flex items-center justify-between px-5 py-3 table-row">
                   <span className="text-sm" style={{ color: "#D4D4D8" }}>{vendor.name}</span>
                   <div className="flex items-center gap-2">
-                    <div className="relative flex h-2 w-2">
+                    <div className="relative flex" style={{ width: 8, height: 8 }}>
                       {vendor.status !== "operational" && vendor.status !== "unknown" && (
-                        <div className={`absolute inline-flex h-full w-full rounded-full opacity-75 ping ${cfg.dot}`} />
+                        <div className={`absolute inline-flex opacity-75 ping ${cfg.dot}`} style={{ width: 8, height: 8 }} />
                       )}
-                      <div className={`relative inline-flex rounded-full h-2 w-2 ${cfg.dot}`} />
+                      <div className={`relative inline-flex ${cfg.dot}`} style={{ width: 8, height: 8 }} />
                     </div>
                     <span className="text-xs tabular-nums" style={{ fontFamily: "JetBrains Mono, monospace", color: cfg.color }}>{cfg.label}</span>
                   </div>
@@ -198,7 +198,7 @@ export default function Dashboard() {
         {/* Map */}
         <div className="col-span-3 card overflow-hidden flex flex-col">
           <div className="card-header py-3">
-            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Network Map</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.15em" }}>NETWORK MAP</span>
             <div className="flex items-center gap-4" style={{ fontSize: 11, color: "#52525B" }}>
               {[["#22C55E", "Online"], ["#F59E0B", "Degraded"], ["#EF4444", "Offline"]].map(([c, l]) => (
                 <span key={l} className="flex items-center gap-1.5">
@@ -220,7 +220,7 @@ export default function Dashboard() {
         {/* Recent Tickets */}
         <div className="col-span-2 card flex flex-col">
           <div className="card-header py-3">
-            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>Recent Tickets</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.15em" }}>RECENT TICKETS</span>
             <Link to="/tickets" className="flex items-center gap-1 text-xs" style={{ color: "#52525B", textDecoration: "none" }}
               onMouseEnter={e => e.currentTarget.style.color = "#A1A1AA"}
               onMouseLeave={e => e.currentTarget.style.color = "#52525B"}>
