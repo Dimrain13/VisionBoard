@@ -155,7 +155,7 @@ async def _wazuh_get_token(settings: dict) -> str:
     base_url = f"https://{settings['wazuh_url']}:{settings.get('wazuh_api_port', 55000)}"
     creds = base64.b64encode(f"{settings['wazuh_username']}:{settings['wazuh_password']}".encode()).decode()
 
-    async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+    async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
         resp = await client.post(
             f"{base_url}/security/user/authenticate",
             headers={"Authorization": f"Basic {creds}"}
@@ -618,6 +618,12 @@ async def wazuh_connectivity():
         _wazuh_token_cache.clear()  # Force fresh auth
         await _wazuh_get_token(settings)
         return {"connected": True, "reason": "ok", "url": settings["wazuh_url"]}
+    except httpx.ConnectTimeout:
+        return {"connected": False, "reason": f"Connection timeout – is {settings['wazuh_url']} reachable from this host?"}
+    except httpx.ConnectError:
+        return {"connected": False, "reason": f"Connection refused – check IP/port and that Wazuh API is running"}
+    except httpx.HTTPStatusError as exc:
+        return {"connected": False, "reason": f"HTTP {exc.response.status_code} – check credentials"}
     except Exception as exc:
         return {"connected": False, "reason": str(exc)[:200]}
 

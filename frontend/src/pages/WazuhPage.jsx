@@ -111,7 +111,11 @@ export default function WazuhPage() {
             <div className="relative inline-flex" style={{ width: 7, height: 7, background: status.connected ? "#10B981" : "#EF4444" }} />
           </div>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: status.connected ? "#10B981" : "#EF4444", letterSpacing: "0.15em" }}>
-            {status.connected ? `CONNECTED / ${status.url || "10.202.10.70"}` : `CONNECTION FAILED: ${status.reason}`}
+            {status.connected
+              ? `CONNECTED / ${status.url || "10.202.10.70"}`
+              : status.reason === "not_configured"
+              ? "NOT CONFIGURED"
+              : `UNREACHABLE: ${status.reason}`}
           </span>
         </div>
       )}
