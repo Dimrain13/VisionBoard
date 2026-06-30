@@ -1,120 +1,75 @@
-# IT Command Center - PRD
+# IT Command Center — PRD
 
-## Overview
-A futuristic, dark-mode IT Operations Dashboard built for 1920x1080 display on a Raspberry Pi. Provides at-a-glance monitoring for IT teams across 8 locations in MI, OH, and IN.
+## Original Problem Statement
+Create a dashboard in Python/React to display important IT information at a glance for a NOC team running on a Raspberry Pi (1920x1080). Features include WUG alerting (via emails), DIA circuits from HP Aruba/Orchestrator, ticket info from Vivantio, vendor health checks (CrowdStrike, NinjaOne, Zscaler, O365/D365), a network map with 8 specific locations, and UniFi alerts via UDP Syslog receiver.
 
-**App URL:** https://network-monitor-65.preview.emergentagent.com  
-**Architecture:** React frontend + FastAPI backend + MongoDB
+## Tech Stack
+- Frontend: React + TailwindCSS + Shadcn/UI + Lucide React
+- Backend: FastAPI + MongoDB (Motor async driver)
+- Design: "Precision Command Center" — JetBrains Mono, zero border-radius, square dots, numbered text-only sidebar
 
----
-
-## User Personas
-- IT Operations staff monitoring infrastructure
-- NOC (Network Operations Center) team
-- IT managers reviewing site and service health
-
----
-
-## Locations (8 Sites)
-| Site | State | Type |
-|---|---|---|
-| Remus | MI | Office |
-| Ovid | MI | Office |
-| Mt. Pleasant | MI | Office |
-| Constantine | MI | Office |
-| Novi | MI | HQ (hub) |
-| Canton Plant | OH | Plant |
-| Canton Warehouse | OH | Warehouse |
-| Middlebury | IN | Office |
-
----
+## 8 Site Locations
+Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant), Canton OH (Warehouse), Middlebury IN
 
 ## Architecture
+```
+/app/
+├── backend/
+│   ├── server.py          # FastAPI app + UniFi UDP syslog receiver + all API routes
+│   ├── requirements.txt
+│   └── .env
+├── frontend/
+│   ├── src/
+│   │   ├── App.js         # Routes (includes /unifi for UniFi Events)
+│   │   ├── App.css        # All component classes: .card, .btn, .badge-*, .nav-item, .section-label
+│   │   ├── index.css      # Google Fonts import (JetBrains Mono, Inter)
+│   │   ├── components/
+│   │   │   ├── Layout.jsx
+│   │   │   ├── Sidebar.jsx   # Numbered text-only nav, no icons
+│   │   │   └── Header.jsx    # Page label + clock + square status dot
+│   │   └── pages/
+│   │       ├── Dashboard.jsx
+│   │       ├── NetworkMap.jsx
+│   │       ├── Alerts.jsx
+│   │       ├── ServiceStatus.jsx
+│   │       ├── DIACircuits.jsx
+│   │       ├── Tickets.jsx
+│   │       ├── UniFiEvents.jsx  # NEW: terminal-style syslog feed
+│   │       └── Settings.jsx     # Includes UniFi syslog port config
+├── memory/
+│   ├── PRD.md
+│   └── test_credentials.md
+└── design_guidelines.json
+```
 
-### Backend (`/app/backend/server.py`)
-- FastAPI with MongoDB (motor async)
-- Vendor status checks via httpx (async, 8s timeout)
-- IMAP email polling for WUG alerts (background task, 2 min interval)
-- WUG email webhook endpoint
-- Seed demo data on startup if collections empty
+## What's Been Implemented
 
-### Frontend (`/app/frontend/src/`)
-- React 19 with React Router v7
-- react-simple-maps v3 (geoMercator projection, MI/OH/IN states)
-- framer-motion, lucide-react, date-fns
-- Rajdhani (headings) + JetBrains Mono (data) fonts
-- Auto-refresh every 30 seconds on all pages
+### Session 1 — Foundation (2025-06)
+- React + FastAPI scaffolding, routing, layout
+- Mocked data: alerts, circuits (8), tickets (5), vendor status (5), sites (8)
+- Initial retro-futuristic UI (rejected by user)
 
----
+### Session 2 — Modern UI + UniFi (2025-06)
+- New design: "Precision Command Center" (JetBrains Mono, zero-radius, square dots)
+- Sidebar: numbered text-only, no icons (01-08)
+- Applied consistent design across ALL 8 pages (Dashboard, NetworkMap, Alerts, ServiceStatus, DIACircuits, Tickets, Settings, UniFiEvents)
+- **UniFi UDP Syslog Receiver**: asyncio DatagramProtocol class, RFC3164 parser, severity auto-classification
+- **UniFi Events page**: Terminal-style live feed, auto-refresh every 5s, severity filter, 3 KPI cards
+- 8 seeded demo UniFi events in DB (1 critical port scan, 2 warnings, 5 info)
+- Settings page: UniFi syslog port config + usage instructions
+- Backend tested: 8/8 API tests pass
 
-## Core Requirements (Static)
-1. Display WUG alerts from email (IMAP polling + webhook)
-2. Show DIA circuit status for all 8 sites
-3. Vivantio ticket queue
-4. Vendor service status: CrowdStrike, NinjaOne, Zscaler, Microsoft 365, Dynamics 365
-5. Network map with 8 location markers and WAN connections
-6. Secure configuration for API credentials (Settings page)
-7. Dark mode futuristic design for Raspberry Pi display
+## P0 — Active (Next Priority)
+- [ ] Connect WUG email parsing (IMAP poller exists but needs user's IMAP credentials)
+- [ ] Integrate live Vivantio ticket data (needs API URL + key from user)
+- [ ] Integrate HP Aruba/Orchestrator for real DIA circuit data (needs API URL + key from user)
 
----
+## P1 — Real Vendor Status Checks
+- [ ] Implement authenticated status page scrapers for CrowdStrike, NinjaOne, Zscaler, M365, D365
+- [ ] Currently using public status page APIs (can be slow/unreliable)
 
-## What's Been Implemented (v1.0 - 2026-06-29)
-
-### Pages
-- **Dashboard** - 4 KPI cards, active alerts list, vendor status, recent tickets, circuit overview
-- **Network Map** - Interactive react-simple-maps with MI/OH/IN states, 8 site markers, hub-and-spoke connections from Novi, status-colored markers
-- **Alert Center** - Full CRUD, severity filter, acknowledge/delete, manual alert creation, WUG email webhook support
-- **Vendor Status** - Health cards for CrowdStrike, NinjaOne, Zscaler, M365, D365 + IsItDown.right tool
-- **DIA Circuits** - 8 circuits table with full CRUD (add/edit/delete), status badges
-- **Ticket Queue** - Vivantio-labeled queue with status/priority filters, card layout, full CRUD
-- **Settings** - IMAP email config, WUG webhook URL display, Vivantio API config, Aruba Orchestrator config, refresh interval
-
-### Backend APIs
-- `GET /api/dashboard/summary` - aggregated KPI counts
-- `GET/POST/PUT/DELETE /api/alerts` - alert management
-- `POST /api/alerts/email-webhook` - WUG email webhook receiver
-- `GET/POST/PUT/DELETE /api/circuits` - circuit management
-- `GET/POST/PUT/DELETE /api/tickets` - ticket management
-- `GET /api/vendor-status` - live checks of vendor status pages
-- `GET /api/sites` - 8 sites with dynamic status derived from circuits/alerts
-- `GET/PUT /api/settings` - dashboard configuration
-
-### Demo Data Seeded
-- 5 alerts (2 critical, 2 warning, 1 info)
-- 8 circuits (6 up, 1 down at Remus, 1 degraded at Constantine)
-- 5 tickets (TKT-1041 through TKT-1045)
-- App settings with defaults
-
----
-
-## Test Results (v1.0)
-- Backend: 100% (19/19 tests passed)
-- Frontend: 95% (all pages load, all CRUD flows work)
-
----
-
-## P0 Backlog (Next Phase)
-
-### API Integrations (Awaiting Customer Credentials)
-- **Vivantio API** - Real ticket sync (URL + API key needed)
-- **HP Aruba Orchestrator** - Real DIA circuit pull (URL + API token needed)
-- **CrowdStrike Falcon API** - Real threat/device status (Client ID + Secret needed)
-- **NinjaOne API** - Real device/alert status (API key needed)
-- **Zscaler API** - Real ZIA/ZPA status (tenant + API key needed)
-- **Microsoft 365 / D365** - Service health via Microsoft Graph API (Azure App credentials needed)
-- **WUG Email Integration** - IMAP credentials for email polling
-
-### P1 Features
-- Authentication (JWT login) for Raspberry Pi kiosk mode
-- Alert sound notifications for critical severity
-- Historical alert charts (last 24h/7d)
-- Circuit bandwidth utilization graphs (if Aruba API available)
-- Email alert rules (notify by email on critical alerts)
-- Kiosk auto-rotation mode (cycle through pages automatically)
-
-### P2 Features  
-- Mobile responsive layout
-- Dark/light theme toggle
-- Export reports to PDF/CSV
-- Alert grouping and deduplication
-- Custom dashboard widget arrangement
+## P2 — Enhancements
+- [ ] Kiosk auto-rotation mode (Dashboard → Map → Alerts cycling every 30s for wall display)
+- [ ] WebSocket real-time push for UniFi syslog events (currently polling every 5s)
+- [ ] Email-to-alert webhook endpoint for WUG integration
+- [ ] Historical trend charts for circuit uptime / alert frequency

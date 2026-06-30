@@ -48,7 +48,7 @@ export default function Sidebar() {
       <div style={{ padding: "14px 24px", borderTop: "1px solid #141416" }}>
         <div className="flex items-center gap-2.5">
           <div style={{ width: 5, height: 5, background: "#10B981", flexShrink: 0 }} />
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#1F1F23", letterSpacing: "0.15em" }}>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#27272A", letterSpacing: "0.15em" }}>
             SYSTEM NOMINAL
           </span>
         </div>
