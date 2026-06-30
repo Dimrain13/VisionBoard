@@ -1,102 +1,105 @@
 {
-  "theme": {
-    "archetype": "Archetype 4: Swiss & High-Contrast (Modern Dark-First SaaS variant)",
-    "mode": "dark",
-    "description": "A calm, dark-first dashboard tailored for NOC (Network Operations Center) staff on a 1920x1080 Raspberry Pi display. It follows the 'Linear/Vercel' aesthetic with high information density, stark contrasts, no neon or CRT effects, and relies on subtle glassmorphism, 1px borders, and bento-box layouts to maintain an organized, premium feel."
-  },
+  "project_type": "NOC Dashboard",
+  "theme": "DARK",
+  "archetype": "Swiss High-Contrast / Precision Command Center",
+  "resolution_target": "1920x1080",
+  "design_philosophy": "Linear.app precision combined with a hacker-grade command center. High data density, sharp edges, pure text-based navigation, and glowing active states. Absolutely no CRT/retro aesthetics.",
   "colors": {
-    "background": {
-      "default": "#09090B",
-      "surface": "#121214",
-      "surfaceHover": "#18181B",
-      "card": "#09090B",
-      "overlay": "rgba(0, 0, 0, 0.6)"
-    },
-    "text": {
-      "primary": "#FAFAFA",
-      "secondary": "#A1A1AA",
-      "muted": "#71717A",
-      "inverse": "#09090B"
-    },
-    "accents": {
-      "brand": "#FFFFFF",
-      "success": "#22C55E",
+    "background": "#09090B",
+    "surface": "#121214",
+    "surface_hover": "#18181B",
+    "border": "#27272A",
+    "border_focus": "#52525B",
+    "text_primary": "#FAFAFA",
+    "text_secondary": "#A1A1AA",
+    "text_muted": "#52525B",
+    "accent_primary": "#FAFAFA",
+    "status": {
+      "success": "#10B981",
       "warning": "#F59E0B",
       "error": "#EF4444",
-      "info": "#3B82F6"
-    },
-    "borders": {
-      "subtle": "#27272A",
-      "strong": "#3F3F46"
+      "info": "#0A84FF"
     }
   },
   "typography": {
-    "fontFamilies": {
-      "heading": "'Plus Jakarta Sans', sans-serif",
-      "body": "'Inter', sans-serif",
-      "mono": "'Geist Mono', 'JetBrains Mono', monospace"
+    "fonts": {
+      "heading": "JetBrains Mono",
+      "body": "IBM Plex Sans",
+      "mono": "JetBrains Mono"
     },
-    "sizes": {
-      "h1": "text-4xl tracking-tight font-medium leading-none",
-      "h2": "text-2xl tracking-tight font-medium leading-tight",
-      "h3": "text-xl font-medium",
-      "body": "text-base",
-      "small": "text-sm",
-      "mono": "text-xs font-mono tracking-tight"
-    },
-    "rules": {
-      "headlines": "Use tight tracking. Avoid generic bolding; prefer font-medium.",
-      "numbers": "Use tabular-nums for tables, metrics, and KPI readouts to prevent layout shifts."
+    "scale": {
+      "h1": "text-3xl font-medium tracking-tighter",
+      "h2": "text-xl font-medium tracking-tight",
+      "h3": "text-lg tracking-tight",
+      "body": "text-sm leading-relaxed",
+      "data_value": "text-2xl font-mono tracking-tight",
+      "label": "text-[10px] tracking-[0.2em] uppercase font-mono text-zinc-400"
     }
   },
   "layout": {
-    "screen": "Fixed 1920x1080 resolution targeting a Raspberry Pi display. Mobile responsiveness is secondary, but use Tailwind grids for scalability.",
-    "structure": "Sidebar + Main Content area.",
-    "sidebar": "w-64 fixed left-0 top-0 h-full border-r border-zinc-800 bg-zinc-950/50 backdrop-blur-xl z-40",
-    "main": "ml-64 p-8 h-screen overflow-y-auto bg-[#09090B]",
-    "spacing": "Use p-6 or p-8 inside cards. gap-6 for main grid. Avoid cramped widgets."
-  },
-  "surfaces": {
-    "bento_cards": "bg-zinc-950/50 border border-zinc-800/50 rounded-xl backdrop-blur-sm shadow-sm overflow-hidden",
-    "glass_panel": "bg-black/40 backdrop-blur-2xl border border-white/10 rounded-2xl",
-    "table_row": "border-b border-zinc-800/50 hover:bg-zinc-900/30 transition-colors"
+    "strategy": "The 'Control Room' Grid",
+    "spacing": "Dense. Use p-4 to p-6 internally for cards to ensure data fits well on 1920x1080.",
+    "sidebar": {
+      "width": "w-64",
+      "style": "bg-zinc-950 border-r border-zinc-900 flex flex-col justify-between py-6",
+      "navigation_items": "NO ICONS. Use a numbered monospace format: '[01] DASHBOARD', '[02] NETWORK', '[03] ALERTS', '[04] TICKETS', '[05] SETTINGS'. Active state uses text-zinc-50 and a 2px left border of #FAFAFA. Inactive uses text-zinc-500."
+    },
+    "main_content": {
+      "grid": "grid grid-cols-12 gap-4 p-6 bg-zinc-950 h-screen overflow-hidden",
+      "zones": {
+        "kpis": "col-span-12 grid grid-cols-4 gap-4",
+        "network_map": "col-span-8 row-span-2 bg-zinc-900/50 border border-zinc-800",
+        "alerts_feed": "col-span-4 row-span-3 bg-zinc-900/50 border border-zinc-800",
+        "vendor_status": "col-span-8 grid grid-cols-5 gap-2",
+        "dia_circuits": "col-span-4 row-span-2",
+        "tickets": "col-span-4 row-span-2",
+        "syslog": "col-span-12 h-48 bg-black border border-zinc-800 font-mono text-xs overflow-y-auto"
+      }
+    }
   },
   "components": {
-    "KPI_Cards": {
-      "structure": "1 Primary Number (text-3xl), 1 Label (text-sm text-zinc-400), 1 Visual (Recharts sparkline or status indicator).",
-      "layout": "Grid col-span-1"
+    "surface": {
+      "base": "bg-[#121214] border border-zinc-800 rounded-none shadow-sm relative overflow-hidden",
+      "header": "flex items-center justify-between p-4 border-b border-zinc-800/50 bg-[#09090B]",
+      "content": "p-4"
     },
-    "Network_Map": {
-      "style": "Embedded dark-themed SVG or Map component (Recharts/react-simple-maps) covering MI, OH, IN. Use #27272A for landmass, glowing dots (success/error accents) for the 8 locations.",
-      "layout": "col-span-2 row-span-2 or full width section depending on grid."
+    "buttons": {
+      "primary": "bg-zinc-100 text-zinc-950 hover:bg-zinc-300 rounded-none font-mono text-xs uppercase px-4 py-2 transition-colors",
+      "secondary": "bg-transparent border border-zinc-800 text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-none font-mono text-xs uppercase px-4 py-2 transition-colors",
+      "ghost": "bg-transparent text-zinc-400 hover:text-white rounded-none font-mono text-xs uppercase px-2 py-1"
     },
-    "Vendor_Status": {
-      "style": "Minimal list. Vendor name on left, colored pulsing status dot on right.",
-      "vendors": ["CrowdStrike", "NinjaOne", "Zscaler", "O365/D365"]
+    "badges": {
+      "base": "px-2 py-0.5 text-[10px] font-mono border rounded-none uppercase tracking-wider",
+      "success": "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+      "warning": "bg-amber-500/10 text-amber-400 border-amber-500/20",
+      "error": "bg-red-500/10 text-red-400 border-red-500/20"
     },
-    "Tables": {
-      "style": "Dense tabular data for 'DIA Circuits' and 'Tickets'. Left-aligned headers, text-sm, tabular-nums for IPs/IDs."
+    "tables": {
+      "wrapper": "w-full text-sm text-left",
+      "header": "text-[10px] font-mono uppercase tracking-wider text-zinc-500 border-b border-zinc-800 pb-2",
+      "row": "border-b border-zinc-800/50 hover:bg-zinc-800/20 transition-colors",
+      "cell": "py-2 px-1 align-middle"
     }
   },
   "motion": {
-    "hover": "Subtle border highlight (border-zinc-700) and -translate-y-[1px]. Fast transitions (150ms).",
-    "loading": "Use skeleton placeholders with shimmer animation (bg-zinc-800/50 animate-pulse).",
-    "status": "For operational/error states, use a tiny pulsing ring (ping animation) on the status dot."
+    "indicators": "Active nodes and live critical alerts MUST use the Tailwind animate-ping utility (opacity-75, scale-150) paired with a solid core dot to simulate hardware LEDs.",
+    "transitions": "Use fast, crisp transitions (duration-150 ease-in-out). Avoid bouncy or slow spring animations.",
+    "loading_states": "Do not use generic spinners. Use a rapid opacity pulse on standard monospace characters (e.g., '[ LOADING... ]') or structural skeleton boxes with sharp corners."
   },
-  "icons_and_assets": {
-    "library": "lucide-react",
-    "style": "Stroke width 1.5, size 20px for nav, 16px for inline.",
-    "map": "Instruct main agent to build a custom SVG map using react-simple-maps or D3 covering the US Midwest, or a stylized dot-matrix grid map."
+  "feature_execution": {
+    "network_map": {
+      "style": "Abstracted geometric map. Use pure SVG with 1px zinc-800 lines for the hub-spoke model connecting MI, OH, and IN sites.",
+      "nodes": "Sites are represented by small squares (not circles) with an inner status color and an outer glowing/pinging ring if active or alarming."
+    },
+    "vendor_health": {
+      "style": "Ultra-dense. 5 minimalist blocks in a row. Layout: Top label (font-mono text-[10px]), bottom value ('OPERATIONAL' in green, 'DEGRADED' in amber). 1px border. Leftmost 2px of the block uses the status color as a structural accent."
+    },
+    "syslog": {
+      "style": "True terminal aesthetic. bg-black. text-[10px] or text-xs JetBrains Mono. Timestamp in zinc-600, severity in status color, message in zinc-300."
+    }
   },
-  "testing": {
-    "requirements": "All interactive elements (nav links, buttons) and key informational nodes (KPI values, status indicators, table rows) MUST include a 'data-testid' attribute using kebab-case role-based naming (e.g., 'nav-dashboard-link', 'kpi-alerts-value')."
-  },
-  "instructions_to_main_agent": [
-    "Strictly avoid any retro, neon, CRT, or terminal aesthetics. Build a high-end, clean SaaS dashboard.",
-    "Implement a responsive 12-column bento-grid layout for the Main Dashboard view.",
-    "Use 'lucide-react' for all icons.",
-    "Ensure the application strictly runs inside a Dark Mode context. Hardcode dark mode classes or set dark mode globally.",
-    "For charts (KPI sparklines), use 'recharts' with transparent backgrounds and minimalist axes.",
-    "For the Network Map, construct a clean, modern geographic representation of Michigan, Ohio, and Indiana. Use absolute positioned glowing dots for the 8 locations if a real map library is unavailable, overlaying a stylized subtle SVG."
-  ]
+  "technical_requirements": {
+    "testing": "All interactive and key informational elements MUST include a data-testid attribute (e.g., data-testid='sidebar-nav-alerts').",
+    "implementation": "Do not use generic Shadcn cards with heavy drop shadows and rounded corners. Strip `rounded-xl` and replace with `rounded-none`. Force tight paddings."
+  }
 }
