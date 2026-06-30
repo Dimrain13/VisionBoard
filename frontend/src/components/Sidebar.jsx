@@ -8,7 +8,7 @@ const NAV = [
   { num: "04", path: "/status",    label: "VENDOR STATUS"},
   { num: "05", path: "/circuits",  label: "DIA CIRCUITS" },
   { num: "06", path: "/tickets",   label: "TICKETS"      },
-  { num: "07", path: "/unifi",     label: "UNIFI EVENTS" },
+  { num: "07", path: "/wazuh",     label: "WAZUH"        },
   { num: "08", path: "/settings",  label: "SETTINGS"     },
 ];
 

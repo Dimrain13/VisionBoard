@@ -59,6 +59,15 @@ Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant), 
 - Settings page: UniFi syslog port config + usage instructions
 - Backend tested: 8/8 API tests pass
 
+### Session 3 — Wazuh SIEM Integration (2026-06)
+- **Wazuh backend service** in server.py: JWT token auth (REST API port 55000), OpenSearch query (Indexer port 9200), SSL verify=False
+- API endpoints: `/api/wazuh/status`, `/api/wazuh/alerts`, `/api/wazuh/agents`, `/api/wazuh/summary`
+- **WazuhPage.jsx** (`/wazuh`): terminal alert feed, severity filter, group filter, hours dropdown, agent status grid
+- Sidebar nav `07 WAZUH` replaces `UNIFI EVENTS`
+- Settings: WAZUH SIEM section with IP 10.202.10.70 pre-filled, ports 55000/9200 pre-configured
+- Connection status banner: amber "NOT CONFIGURED" → green "CONNECTED" once credentials entered
+
+
 ## P0 — Active (Next Priority)
 - [ ] Connect WUG email parsing (IMAP poller exists but needs user's IMAP credentials)
 - [ ] Integrate live Vivantio ticket data (needs API URL + key from user)

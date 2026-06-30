@@ -174,6 +174,65 @@ export default function Settings() {
           </div>
         </Section>
 
+        {/* Wazuh SIEM */}
+        <Section title="WAZUH SIEM">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <div style={{ gridColumn: "span 1" }}>
+              <div className="section-label mb-1.5">SERVER IP / HOSTNAME</div>
+              <input data-testid="settings-wazuh_url" placeholder="10.202.10.70" className="input"
+                value={settings.wazuh_url || ""}
+                onChange={e => set("wazuh_url", e.target.value)} />
+            </div>
+            <div>
+              <div className="section-label mb-1.5">API PORT (REST)</div>
+              <input data-testid="settings-wazuh_api_port" type="number" className="input"
+                value={settings.wazuh_api_port || 55000}
+                onChange={e => set("wazuh_api_port", parseInt(e.target.value) || 55000)} />
+            </div>
+            <div>
+              <div className="section-label mb-1.5">INDEXER PORT</div>
+              <input data-testid="settings-wazuh_indexer_port" type="number" className="input"
+                value={settings.wazuh_indexer_port || 9200}
+                onChange={e => set("wazuh_indexer_port", parseInt(e.target.value) || 9200)} />
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+            <div>
+              <div className="section-label mb-1.5">API USERNAME</div>
+              <input data-testid="settings-wazuh_username" placeholder="wazuh-wui" className="input"
+                value={settings.wazuh_username || ""}
+                onChange={e => set("wazuh_username", e.target.value)} />
+            </div>
+            <div>
+              <div className="section-label mb-1.5">API PASSWORD</div>
+              <input data-testid="settings-wazuh_password" type="password" placeholder="API password" className="input"
+                onChange={e => set("wazuh_password", e.target.value)} />
+            </div>
+            <div>
+              <div className="section-label mb-1.5">INDEXER USERNAME <span style={{ color: "#1F1F23" }}>(if different)</span></div>
+              <input data-testid="settings-wazuh_indexer_username" placeholder="admin" className="input"
+                value={settings.wazuh_indexer_username || ""}
+                onChange={e => set("wazuh_indexer_username", e.target.value)} />
+            </div>
+            <div>
+              <div className="section-label mb-1.5">INDEXER PASSWORD <span style={{ color: "#1F1F23" }}>(if different)</span></div>
+              <input data-testid="settings-wazuh_indexer_password" type="password" placeholder="Indexer password" className="input"
+                onChange={e => set("wazuh_indexer_password", e.target.value)} />
+            </div>
+          </div>
+          <div className="mt-4 p-3" style={{ background: "rgba(16,185,129,0.03)", border: "1px solid rgba(16,185,129,0.1)" }}>
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3F3F46", lineHeight: 2 }}>
+              <span style={{ color: "#10B981", letterSpacing: "0.1em" }}>WAZUH API:</span>{" "}
+              REST API on port 55000 (JWT auth). Indexer on port 9200 (Basic Auth).
+              Self-signed certs are handled automatically.
+              Alerts are queried from{" "}
+              <code style={{ color: "#52525B", background: "rgba(0,0,0,0.4)", padding: "1px 6px" }}>wazuh-alerts-*</code>
+              {" "}index. Rule groups (UniFi, WUG, HP…) are read from{" "}
+              <code style={{ color: "#52525B", background: "rgba(0,0,0,0.4)", padding: "1px 6px" }}>rule.groups[]</code>.
+            </p>
+          </div>
+        </Section>
+
         {/* UniFi Syslog */}
         <Section title="UNIFI SYSLOG RECEIVER">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

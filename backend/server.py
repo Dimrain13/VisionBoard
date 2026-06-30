@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-import os, logging, asyncio, httpx, imaplib, email as emaillib, re, uuid
+import os, logging, asyncio, httpx, imaplib, email as emaillib, re, uuid, base64, time
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent
@@ -61,6 +61,14 @@ class SettingsUpdate(BaseModel):
     aruba_api_key: Optional[str] = None
     unifi_syslog_port: Optional[int] = None
     unifi_syslog_enabled: Optional[bool] = None
+    wazuh_url: Optional[str] = None
+    wazuh_api_port: Optional[int] = None
+    wazuh_indexer_port: Optional[int] = None
+    wazuh_username: Optional[str] = None
+    wazuh_password: Optional[str] = None
+    wazuh_indexer_username: Optional[str] = None
+    wazuh_indexer_password: Optional[str] = None
+    wazuh_enabled: Optional[bool] = None
 
 # ─── UniFi Syslog ─────────────────────────────────────────────────
 def parse_unifi_syslog(raw: str) -> dict:
@@ -132,6 +140,77 @@ class UnifiSyslogProtocol(asyncio.DatagramProtocol):
 
     def connection_lost(self, _exc):
         logger.info("UniFi syslog UDP listener closed")
+
+
+# ─── Wazuh SIEM Client ────────────────────────────────────────────
+_wazuh_token_cache: dict = {}   # {"token": str, "expires_at": float}
+
+
+async def _wazuh_get_token(settings: dict) -> str:
+    """Authenticate to Wazuh REST API and cache the JWT token."""
+    global _wazuh_token_cache
+    if _wazuh_token_cache.get("token") and time.time() < _wazuh_token_cache.get("expires_at", 0):
+        return _wazuh_token_cache["token"]
+
+    base_url = f"https://{settings['wazuh_url']}:{settings.get('wazuh_api_port', 55000)}"
+    creds = base64.b64encode(f"{settings['wazuh_username']}:{settings['wazuh_password']}".encode()).decode()
+
+    async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+        resp = await client.post(
+            f"{base_url}/security/user/authenticate",
+            headers={"Authorization": f"Basic {creds}"}
+        )
+        resp.raise_for_status()
+        token = resp.json()["data"]["token"]
+        _wazuh_token_cache = {"token": token, "expires_at": time.time() + 840}
+        logger.info("Wazuh JWT token refreshed")
+        return token
+
+
+async def _wazuh_fetch_alerts(settings: dict, min_level: int = 3, hours_back: int = 24, limit: int = 200, group_filter: str = None) -> list:
+    """Query Wazuh Indexer (OpenSearch) for alerts."""
+    idx_url  = f"https://{settings['wazuh_url']}:{settings.get('wazuh_indexer_port', 9200)}"
+    idx_user = settings.get("wazuh_indexer_username") or settings.get("wazuh_username", "")
+    idx_pass = settings.get("wazuh_indexer_password") or settings.get("wazuh_password", "")
+
+    filters = [
+        {"range": {"rule.level": {"gte": min_level}}},
+        {"range": {"timestamp": {"gte": f"now-{hours_back}h", "lte": "now"}}},
+    ]
+    if group_filter:
+        filters.append({"term": {"rule.groups": group_filter}})
+
+    body = {
+        "query": {"bool": {"filter": filters}},
+        "sort":  [{"timestamp": {"order": "desc"}}],
+        "size":  limit,
+        "_source": ["timestamp", "rule", "agent", "location", "full_log"],
+    }
+
+    async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+        resp = await client.post(
+            f"{idx_url}/wazuh-alerts-*/_search",
+            auth=(idx_user, idx_pass),
+            json=body,
+        )
+        resp.raise_for_status()
+        hits = resp.json().get("hits", {}).get("hits", [])
+        return [h["_source"] for h in hits]
+
+
+async def _wazuh_fetch_agents(settings: dict) -> list:
+    """Retrieve agent list from Wazuh REST API."""
+    token    = await _wazuh_get_token(settings)
+    base_url = f"https://{settings['wazuh_url']}:{settings.get('wazuh_api_port', 55000)}"
+
+    async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+        resp = await client.get(
+            f"{base_url}/agents",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"limit": 500, "sort": "+name"},
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", {}).get("affected_items", [])
 
 
 # ─── Vendor Status ────────────────────────────────────────────────
@@ -229,7 +308,20 @@ async def seed_demo_data():
             "email_folder": "INBOX", "wug_sender_filter": "whatsupgold",
             "vivantio_api_url": "", "vivantio_api_key": "", "aruba_api_url": "", "aruba_api_key": "",
             "unifi_syslog_port": 5140, "unifi_syslog_enabled": True,
+            "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000, "wazuh_indexer_port": 9200,
+            "wazuh_username": "", "wazuh_password": "", "wazuh_indexer_username": "",
+            "wazuh_indexer_password": "", "wazuh_enabled": False,
         })
+    else:
+        # Migrate: ensure Wazuh fields exist for existing installs
+        await db.settings.update_one(
+            {"_id": "app_settings", "wazuh_url": {"$exists": False}},
+            {"$set": {
+                "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000, "wazuh_indexer_port": 9200,
+                "wazuh_username": "", "wazuh_password": "", "wazuh_indexer_username": "",
+                "wazuh_indexer_password": "", "wazuh_enabled": False,
+            }}
+        )
 
     if await db.unifi_events.count_documents({}) == 0:
         unifi_seed = [
@@ -500,14 +592,88 @@ async def get_sites():
 
 @api_router.get("/settings")
 async def get_settings():
-    s = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0, "email_password": 0})
+    s = await db.settings.find_one(
+        {"_id": "app_settings"},
+        {"_id": 0, "email_password": 0, "wazuh_password": 0, "wazuh_indexer_password": 0}
+    )
     return s or {}
 
 @api_router.put("/settings")
 async def update_settings(data: SettingsUpdate):
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     await db.settings.update_one({"_id": "app_settings"}, {"$set": update_data}, upsert=True)
-    return await db.settings.find_one({"_id": "app_settings"}, {"_id": 0, "email_password": 0})
+    return await db.settings.find_one(
+        {"_id": "app_settings"},
+        {"_id": 0, "email_password": 0, "wazuh_password": 0, "wazuh_indexer_password": 0}
+    )
+
+# ─── Wazuh API Endpoints ───────────────────────────────────────────
+@api_router.get("/wazuh/status")
+async def wazuh_connectivity():
+    """Test connection to Wazuh REST API."""
+    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
+    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+        return {"connected": False, "reason": "not_configured"}
+    try:
+        _wazuh_token_cache.clear()  # Force fresh auth
+        await _wazuh_get_token(settings)
+        return {"connected": True, "reason": "ok", "url": settings["wazuh_url"]}
+    except Exception as exc:
+        return {"connected": False, "reason": str(exc)[:200]}
+
+@api_router.get("/wazuh/alerts")
+async def get_wazuh_alerts(
+    min_level: int = 3,
+    hours_back: int = 24,
+    limit: int = 200,
+    group: str = None,
+):
+    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
+    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+        raise HTTPException(status_code=503, detail="Wazuh not configured")
+    try:
+        alerts = await _wazuh_fetch_alerts(settings, min_level, hours_back, limit, group)
+        return {"items": alerts, "total": len(alerts)}
+    except Exception as exc:
+        logger.error(f"Wazuh alerts error: {exc}")
+        raise HTTPException(status_code=503, detail=f"Wazuh indexer: {str(exc)[:200]}")
+
+@api_router.get("/wazuh/agents")
+async def get_wazuh_agents():
+    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
+    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+        raise HTTPException(status_code=503, detail="Wazuh not configured")
+    try:
+        agents = await _wazuh_fetch_agents(settings)
+        return {"items": agents, "total": len(agents)}
+    except Exception as exc:
+        logger.error(f"Wazuh agents error: {exc}")
+        raise HTTPException(status_code=503, detail=f"Wazuh API: {str(exc)[:200]}")
+
+@api_router.get("/wazuh/summary")
+async def wazuh_summary():
+    """Alert counts by severity for the dashboard KPI card."""
+    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
+    empty = {"configured": False, "connected": False, "critical": 0, "high": 0, "medium": 0, "low": 0, "total_agents": 0}
+    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+        return empty
+    try:
+        alerts = await _wazuh_fetch_alerts(settings, min_level=1, hours_back=24, limit=500)
+        agents = await _wazuh_fetch_agents(settings)
+        def lvl(a): return int((a.get("rule") or {}).get("level", 0))
+        return {
+            "configured": True, "connected": True,
+            "critical": sum(1 for a in alerts if lvl(a) >= 15),
+            "high":     sum(1 for a in alerts if 11 <= lvl(a) <= 14),
+            "medium":   sum(1 for a in alerts if 6 <= lvl(a) <= 10),
+            "low":      sum(1 for a in alerts if lvl(a) <= 5),
+            "total":    len(alerts),
+            "total_agents":  len(agents),
+            "active_agents": sum(1 for ag in agents if ag.get("status") == "active"),
+        }
+    except Exception as exc:
+        logger.error(f"Wazuh summary error: {exc}")
+        return {**empty, "configured": True, "error": str(exc)[:120]}
 
 @api_router.get("/unifi-events")
 async def get_unifi_events(severity: str = None, limit: int = 200):
