@@ -21,7 +21,30 @@
 }
 .card-body { padding: 16px; }
 
-/* ─── Sidebar ──────────────────────────────────────────────────────── */
+/* ─── Top Tab Navigation ─────────────────────────────────────────── */
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #3F3F46;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  white-space: nowrap;
+}
+.tab-item:hover { color: #71717A; }
+.tab-item-active {
+  color: #FAFAFA;
+  border-bottom-color: #FAFAFA;
+  background: rgba(255,255,255,0.025);
+}
+
+/* ─── Sidebar (legacy — kept for reference) ──────────────────────── */
 .nav-item {
   display: flex;
   align-items: center;

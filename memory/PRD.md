@@ -1,12 +1,12 @@
 # IT Command Center — PRD
 
 ## Original Problem Statement
-Create a dashboard in Python/React to display important IT information at a glance for a NOC team running on a Raspberry Pi (1920x1080). Features include WUG alerting (via emails), DIA circuits from HP Aruba/Orchestrator, ticket info from Vivantio, vendor health checks (CrowdStrike, NinjaOne, Zscaler, O365/D365), a network map with 8 specific locations, and UniFi alerts via UDP Syslog receiver.
+Create a dashboard in Python/React to display important IT information at a glance for a NOC team, running on a Raspberry Pi (1920x1080). Primarily a READ-ONLY display pulling from external APIs. Features: WUG alerting (via emails), DIA circuits from HP Aruba/Orchestrator, ticket info from Vivantio, vendor health checks, network map with 8 locations, UniFi/Wazuh SIEM alerts.
 
 ## Tech Stack
 - Frontend: React + TailwindCSS + Shadcn/UI + Lucide React
-- Backend: FastAPI + MongoDB (Motor async driver)
-- Design: "Precision Command Center" — JetBrains Mono, zero border-radius, square dots, numbered text-only sidebar
+- Backend: FastAPI + MongoDB (settings only — minimal writes)
+- Design: "Precision Command Center" — JetBrains Mono, zero border-radius, square dots, top-tab navigation
 
 ## 8 Site Locations
 Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant), Canton OH (Warehouse), Middlebury IN
@@ -15,18 +15,18 @@ Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant), 
 ```
 /app/
 ├── backend/
-│   ├── server.py          # FastAPI app + UniFi UDP syslog receiver + all API routes
+│   ├── server.py          # FastAPI + Wazuh service + all API routes
 │   ├── requirements.txt
 │   └── .env
 ├── frontend/
 │   ├── src/
-│   │   ├── App.js         # Routes (includes /unifi for UniFi Events)
-│   │   ├── App.css        # All component classes: .card, .btn, .badge-*, .nav-item, .section-label
-│   │   ├── index.css      # Google Fonts import (JetBrains Mono, Inter)
+│   │   ├── App.js         # Routes
+│   │   ├── App.css        # .card .btn .badge-* .tab-item .section-label
 │   │   ├── components/
-│   │   │   ├── Layout.jsx
-│   │   │   ├── Sidebar.jsx   # Numbered text-only nav, no icons
-│   │   │   └── Header.jsx    # Page label + clock + square status dot
+│   │   │   ├── Layout.jsx    # flex-col h-screen, TopNav + main{children}
+│   │   │   ├── TopNav.jsx    # Top tab bar (replaces sidebar)
+│   │   │   ├── Sidebar.jsx   # UNUSED (kept for reference)
+│   │   │   └── Header.jsx    # UNUSED
 │   │   └── pages/
 │   │       ├── Dashboard.jsx
 │   │       ├── NetworkMap.jsx
@@ -34,51 +34,51 @@ Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant), 
 │   │       ├── ServiceStatus.jsx
 │   │       ├── DIACircuits.jsx
 │   │       ├── Tickets.jsx
-│   │       ├── UniFiEvents.jsx  # NEW: terminal-style syslog feed
-│   │       └── Settings.jsx     # Includes UniFi syslog port config
+│   │       ├── WazuhPage.jsx    # Wazuh SIEM — live alerts + agents
+│   │       ├── UniFiEvents.jsx  # UDP syslog (accessible at /unifi)
+│   │       └── Settings.jsx
 ├── memory/
-│   ├── PRD.md
-│   └── test_credentials.md
+│   └── PRD.md
 └── design_guidelines.json
 ```
 
+## Wazuh Connection
+- Server: 10.202.10.70
+- REST API: port 55000 (JWT auth) → agents
+- Indexer: port 9200 (Basic Auth) → wazuh-alerts-* index
+- alert.rule.groups[] contains source tags (UniFi, WUG, HP, etc.)
+- SSL verify=False (self-signed cert)
+
 ## What's Been Implemented
 
-### Session 1 — Foundation (2025-06)
-- React + FastAPI scaffolding, routing, layout
-- Mocked data: alerts, circuits (8), tickets (5), vendor status (5), sites (8)
-- Initial retro-futuristic UI (rejected by user)
+### Session 1 — Foundation
+- React + FastAPI scaffolding, routing, layout, mocked data
 
-### Session 2 — Modern UI + UniFi (2025-06)
-- New design: "Precision Command Center" (JetBrains Mono, zero-radius, square dots)
-- Sidebar: numbered text-only, no icons (01-08)
-- Applied consistent design across ALL 8 pages (Dashboard, NetworkMap, Alerts, ServiceStatus, DIACircuits, Tickets, Settings, UniFiEvents)
-- **UniFi UDP Syslog Receiver**: asyncio DatagramProtocol class, RFC3164 parser, severity auto-classification
-- **UniFi Events page**: Terminal-style live feed, auto-refresh every 5s, severity filter, 3 KPI cards
-- 8 seeded demo UniFi events in DB (1 critical port scan, 2 warnings, 5 info)
-- Settings page: UniFi syslog port config + usage instructions
-- Backend tested: 8/8 API tests pass
+### Session 2 — Modern UI + UniFi Syslog
+- "Precision Command Center" design across all pages
+- UniFi UDP syslog receiver (port 5140)
 
-### Session 3 — Wazuh SIEM Integration (2026-06)
-- **Wazuh backend service** in server.py: JWT token auth (REST API port 55000), OpenSearch query (Indexer port 9200), SSL verify=False
-- API endpoints: `/api/wazuh/status`, `/api/wazuh/alerts`, `/api/wazuh/agents`, `/api/wazuh/summary`
-- **WazuhPage.jsx** (`/wazuh`): terminal alert feed, severity filter, group filter, hours dropdown, agent status grid
-- Sidebar nav `07 WAZUH` replaces `UNIFI EVENTS`
-- Settings: WAZUH SIEM section with IP 10.202.10.70 pre-filled, ports 55000/9200 pre-configured
-- Connection status banner: amber "NOT CONFIGURED" → green "CONNECTED" once credentials entered
+### Session 3 — Wazuh SIEM Integration
+- Full Wazuh backend service + API endpoints
+- WazuhPage.jsx with terminal alert feed, filters, agent grid
+- Settings WAZUH SIEM section (IP 10.202.10.70 pre-filled)
 
+### Session 4 — Top Tab Navigation
+- Replaced left sidebar with TopNav top tab bar
+- Full 1920px width now used for content
+- Layout.jsx simplified: TopNav + children
 
-## P0 — Active (Next Priority)
-- [ ] Connect WUG email parsing (IMAP poller exists but needs user's IMAP credentials)
-- [ ] Integrate live Vivantio ticket data (needs API URL + key from user)
-- [ ] Integrate HP Aruba/Orchestrator for real DIA circuit data (needs API URL + key from user)
+## P0 — Next Priority (needs user credentials)
+- [ ] WUG email IMAP (mail server credentials needed in Settings)
+- [ ] Vivantio live tickets (API URL + key needed)
+- [ ] HP Aruba live DIA circuits (Orchestrator URL + key needed)
 
-## P1 — Real Vendor Status Checks
-- [ ] Implement authenticated status page scrapers for CrowdStrike, NinjaOne, Zscaler, M365, D365
-- [ ] Currently using public status page APIs (can be slow/unreliable)
+## P1 — Enhancements
+- [ ] Real vendor status checks (authenticated status pages)
+- [ ] Dashboard KPI wired to Wazuh summary endpoint
 
-## P2 — Enhancements
-- [ ] Kiosk auto-rotation mode (Dashboard → Map → Alerts cycling every 30s for wall display)
-- [ ] WebSocket real-time push for UniFi syslog events (currently polling every 5s)
-- [ ] Email-to-alert webhook endpoint for WUG integration
-- [ ] Historical trend charts for circuit uptime / alert frequency
+## P2 — Future
+- [ ] Kiosk auto-rotation (Dashboard → Map → Alerts cycling)
+- [ ] WebSocket push for Wazuh alerts (currently 30s polling)
+- [ ] Raspberry Pi deployment: Dockerfile or install script
+- [ ] Replace MongoDB with flat settings.yml (simpler Pi deploy)
