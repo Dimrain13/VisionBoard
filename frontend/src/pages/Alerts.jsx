@@ -4,10 +4,10 @@ import { CheckCircle, Trash2, Plus, X } from "lucide-react";
 import { formatDistanceToNowStrict, parseISO } from "date-fns";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const SEV = {
-  critical: { bar: "alert-critical", badge: "badge-red",  text: "#F87171", label: "CRITICAL" },
-  warning:  { bar: "alert-warning",  badge: "badge-amber", text: "#FCD34D", label: "WARNING" },
-  info:     { bar: "alert-info",     badge: "badge-blue",  text: "#60A5FA", label: "INFO" },
+const SEV_CONFIG = {
+  critical: { bar: "alert-critical", badge: "badge-red",   text: "#FF2A2A", label: "CRITICAL" },
+  warning:  { bar: "alert-warning",  badge: "badge-amber", text: "#FFB014", label: "WARNING" },
+  info:     { bar: "alert-info",     badge: "badge-blue",  text: "#00E5FF", label: "INFO" },
 };
 const EMPTY = { title: "", message: "", severity: "warning", site: "", device: "" };
 
@@ -50,7 +50,7 @@ export default function Alerts() {
 
       {/* Counts */}
       <div className="grid grid-cols-4 gap-3">
-        {[["Unacknowledged", counts.unacked, "#FAFAFA"], ["Critical", counts.critical, "#F87171"], ["Warning", counts.warning, "#FCD34D"], ["Info", counts.info, "#60A5FA"]].map(([l, v, c]) => (
+        {[["Unacknowledged", counts.unacked, "#E2E2E5"], ["Critical", counts.critical, "#FF2A2A"], ["Warning", counts.warning, "#FFB014"], ["Info", counts.info, "#00E5FF"]].map(([l, v, c]) => (
           <div key={l} className="card p-4 text-center">
             <div className="text-3xl font-semibold tabular-nums" style={{ fontFamily: "'JetBrains Mono', monospace", color: c }}>{v}</div>
             <div className="section-label mt-1.5">{l}</div>
@@ -60,11 +60,11 @@ export default function Alerts() {
 
       {/* Filters */}
       <div className="flex items-center gap-2">
-        <span className="text-xs" style={{ color: "#52525B" }}>Filter:</span>
-        {[["", "All"], ["critical", "Critical"], ["warning", "Warning"], ["info", "Info"]].map(([v, l]) => (
+        <span className="section-label">Filter:</span>
+        {[["", "ALL"], ["critical", "CRITICAL"], ["warning", "WARNING"], ["info", "INFO"]].map(([v, l]) => (
           <button key={l} data-testid={`filter-${v || "all"}`} onClick={() => setFilter(v)}
-            className="px-3 py-1 rounded-md text-xs font-medium transition-all"
-            style={{ background: filter === v ? "rgba(255,255,255,0.08)" : "transparent", color: filter === v ? "#FAFAFA" : "#71717A", border: filter === v ? "1px solid #3F3F46" : "1px solid transparent" }}>
+            className="btn"
+            style={{ color: filter === v ? "#00E5FF" : undefined, borderColor: filter === v ? "rgba(0,229,255,0.4)" : undefined }}>
             {l}
           </button>
         ))}
@@ -83,7 +83,7 @@ export default function Alerts() {
               </div>
             </div>
           ) : alerts.map(alert => {
-            const cfg = SEV[alert.severity] || SEV.info;
+            const cfg = SEV_CONFIG[alert.severity] || SEV_CONFIG.info;
             return (
               <div key={alert.id} data-testid={`alert-row-${alert.id}`}
                 className={`flex items-start gap-4 px-5 py-3.5 table-row ${cfg.bar}`}

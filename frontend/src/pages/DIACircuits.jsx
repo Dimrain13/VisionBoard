@@ -5,10 +5,10 @@ import { Plus, Edit2, Trash2, X } from "lucide-react";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const STATUS_CFG = {
-  up:       { badge: "badge-green", label: "UP",       color: "#10B981" },
-  down:     { badge: "badge-red",   label: "DOWN",     color: "#EF4444" },
-  degraded: { badge: "badge-amber", label: "DEGRADED", color: "#F59E0B" },
-  unknown:  { badge: "badge-zinc",  label: "UNKNOWN",  color: "#27272A" },
+  up:       { badge: "badge-green", label: "UP",       color: "#00FF66" },
+  down:     { badge: "badge-red",   label: "DOWN",     color: "#FF2A2A" },
+  degraded: { badge: "badge-amber", label: "DEGRADED", color: "#FFB014" },
+  unknown:  { badge: "badge-zinc",  label: "UNKNOWN",  color: "#3A3A48" },
 };
 
 const EMPTY = { site: "", provider: "", circuit_id: "", bandwidth_mbps: 100, ip_address: "", status: "up", notes: "" };
@@ -65,7 +65,7 @@ export default function DIACircuits() {
 
       {/* KPI Row */}
       <div className="grid grid-cols-3 gap-3">
-        {[["CIRCUITS UP", summary.up, "#10B981"], ["DEGRADED", summary.degraded, "#F59E0B"], ["DOWN", summary.down, "#EF4444"]].map(([l, v, c]) => (
+        {[["CIRCUITS UP", summary.up, "#00FF66"], ["DEGRADED", summary.degraded, "#FFB014"], ["DOWN", summary.down, "#FF2A2A"]].map(([l, v, c]) => (
           <div key={l} className="card p-4 text-center" style={{ borderLeft: `2px solid ${c}` }}>
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 30, fontWeight: 700, color: c, lineHeight: 1 }}>{v}</div>
             <div className="section-label mt-2">{l}</div>

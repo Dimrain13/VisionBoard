@@ -5,7 +5,7 @@ import { format, parseISO } from "date-fns";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const PRI_COLOR  = { critical: "#EF4444", high: "#F97316", medium: "#F59E0B", low: "#3F3F46" };
+const PRI_COLOR  = { critical: "#FF2A2A", high: "#FF6B14", medium: "#FFB014", low: "#3A3A48" };
 const PRI_BADGE  = { critical: "badge-red", high: "badge-amber", medium: "badge-amber", low: "badge-zinc" };
 
 const STATUS_CFG = {
@@ -71,7 +71,7 @@ export default function Tickets() {
 
       {/* KPI Row */}
       <div className="grid grid-cols-3 gap-3">
-        {[["OPEN", counts.open, "#60A5FA"], ["IN PROGRESS", counts.in_progress, "#F59E0B"], ["CRITICAL PRIORITY", counts.critical, "#EF4444"]].map(([l, v, c]) => (
+        {[["OPEN", counts.open, "#00E5FF"], ["IN PROGRESS", counts.in_progress, "#FFB014"], ["CRITICAL PRIORITY", counts.critical, "#FF2A2A"]].map(([l, v, c]) => (
           <div key={l} className="card p-4 text-center" style={{ borderLeft: `2px solid ${c}` }}>
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 30, fontWeight: 700, color: c, lineHeight: 1 }}>{v}</div>
             <div className="section-label mt-2">{l}</div>

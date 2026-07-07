@@ -6,11 +6,11 @@ import { format, parseISO } from "date-fns";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const STATUS_CFG = {
-  operational:  { label: "OPERATIONAL",  color: "#10B981", badge: "badge-green", dot: "dot-online"   },
-  minor_outage: { label: "MINOR ISSUE",  color: "#F59E0B", badge: "badge-amber", dot: "dot-degraded" },
-  major_outage: { label: "MAJOR OUTAGE", color: "#EF4444", badge: "badge-red",   dot: "dot-offline"  },
-  maintenance:  { label: "MAINTENANCE",  color: "#60A5FA", badge: "badge-blue",  dot: "dot-unknown"  },
-  unknown:      { label: "UNKNOWN",      color: "#27272A", badge: "badge-zinc",  dot: "dot-unknown"  },
+  operational:  { label: "OPERATIONAL",  color: "#00FF66", badge: "badge-green", dot: "dot-online"   },
+  minor_outage: { label: "MINOR ISSUE",  color: "#FFB014", badge: "badge-amber", dot: "dot-degraded" },
+  major_outage: { label: "MAJOR OUTAGE", color: "#FF2A2A", badge: "badge-red",   dot: "dot-offline"  },
+  maintenance:  { label: "MAINTENANCE",  color: "#00E5FF", badge: "badge-blue",  dot: "dot-unknown"  },
+  unknown:      { label: "UNKNOWN",      color: "#3A3A48", badge: "badge-zinc",  dot: "dot-unknown"  },
 };
 
 export default function ServiceStatus() {

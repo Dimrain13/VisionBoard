@@ -9,10 +9,10 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 // Wazuh rule.level → severity bucket
 function getLevel(alert) {
   const lvl = parseInt(alert?.rule?.level ?? 0);
-  if (lvl >= 15) return { label: "CRIT", color: "#EF4444", badge: "badge-red",   min: 15 };
-  if (lvl >= 11) return { label: "HIGH", color: "#F97316", badge: "badge-red",   min: 11 };
-  if (lvl >= 6)  return { label: "MED",  color: "#F59E0B", badge: "badge-amber", min: 6  };
-  return            { label: "LOW",  color: "#52525B", badge: "badge-zinc",  min: 1  };
+  if (lvl >= 15) return { label: "CRIT", color: "#FF2A2A", badge: "badge-red",   min: 15 };
+  if (lvl >= 11) return { label: "HIGH", color: "#FF6B14", badge: "badge-red",   min: 11 };
+  if (lvl >= 6)  return { label: "MED",  color: "#FFB014", badge: "badge-amber", min: 6  };
+  return            { label: "LOW",  color: "#3A3A48", badge: "badge-zinc",  min: 1  };
 }
 
 const FILTER_OPTS = [
@@ -123,10 +123,10 @@ export default function WazuhPage() {
       {/* KPI Row */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          ["CRITICAL (24H)", counts.critical, "#EF4444"],
-          ["HIGH (24H)",     counts.high,     "#F97316"],
-          ["MEDIUM (24H)",   counts.medium,   "#F59E0B"],
-          [`ACTIVE AGENTS`,  counts.active,   "#10B981"],
+          ["CRITICAL (24H)", counts.critical, "#FF2A2A"],
+          ["HIGH (24H)",     counts.high,     "#FF6B14"],
+          ["MEDIUM (24H)",   counts.medium,   "#FFB014"],
+          [`ACTIVE AGENTS`,  counts.active,   "#00E5FF"],
         ].map(([l, v, c]) => (
           <div key={l} className="card p-4 text-center" style={{ borderLeft: `2px solid ${c}` }}>
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 28, fontWeight: 700, color: c, lineHeight: 1 }}>

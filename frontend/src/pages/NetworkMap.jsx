@@ -23,19 +23,19 @@ export default function NetworkMap() {
     return () => clearInterval(iv);
   }, [load]);
 
-  const DOT_COLOR = { online: "#22C55E", degraded: "#F59E0B", offline: "#EF4444", unknown: "#52525B" };
+  const DOT_COLOR = { online: "#00FF66", degraded: "#FFB014", offline: "#FF2A2A", unknown: "#3A3A48" };
   const statusBadge = (s) => ({ online: "badge-green", degraded: "badge-amber", offline: "badge-red", unknown: "badge-zinc" }[s] || "badge-zinc");
 
   return (
     <div className="h-full flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>
-          Network Map
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <h1 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, fontWeight: 600, color: "#E2E2E5", letterSpacing: "0.12em" }}>
+          NETWORK MAP
         </h1>
-        <div className="flex items-center gap-4 text-xs" style={{ color: "#52525B" }}>
-          {[["#22C55E","Online"],["#F59E0B","Degraded"],["#EF4444","Offline"]].map(([c,l]) => (
-            <span key={l} className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full inline-block" style={{ background: c }} />{l}
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {[["#00FF66","ONLINE"],["#FFB014","DEGRADED"],["#FF2A2A","OFFLINE"]].map(([c,l]) => (
+            <span key={l} style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3A3A48", letterSpacing: "0.1em" }}>
+              <span style={{ width: 6, height: 6, background: c, display: "inline-block", flexShrink: 0 }} />{l}
             </span>
           ))}
         </div>
@@ -55,9 +55,9 @@ export default function NetworkMap() {
 
         {/* Site Panel */}
         <div className="card flex flex-col min-h-0 overflow-hidden">
-          <div className="card-header py-3">
-            <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>
-              Sites ({sites.length})
+          <div className="card-header" style={{ padding: "10px 16px" }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600, color: "#E2E2E5", letterSpacing: "0.12em" }}>
+              SITES ({sites.length})
             </span>
           </div>
           <div className="flex-1 overflow-auto">
@@ -87,9 +87,11 @@ export default function NetworkMap() {
 
           {selected && (
             <div className="flex-shrink-0 p-4" style={{ borderTop: "1px solid #27272A" }}>
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm font-semibold text-white" style={{ fontFamily: "Plus Jakarta Sans, sans-serif" }}>{selected.name}</span>
-                <span className={`badge ${statusBadge(selected.status)}`}>{selected.status}</span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600, color: "#E2E2E5", letterSpacing: "0.08em" }}>
+                  {selected.name}
+                </span>
+                <span className={`badge ${statusBadge(selected.status)}`}>{selected.status.toUpperCase()}</span>
               </div>
               {[["State", selected.state], ["Type", selected.type], ["Circuits", selected.circuit_count], ["Active Alerts", selected.alert_count]].map(([k, v]) => (
                 <div key={k} className="flex justify-between py-1" style={{ borderBottom: "1px solid rgba(39,39,42,0.5)" }}>
