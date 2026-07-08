@@ -83,6 +83,14 @@ Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant), 
 - All pages updated with new color constants
 - 100% test pass rate (testing agent verified all 8 pages)
 
+### Session 6 — Kiosk Auto-Rotation (2026-02-07)
+- Auto-rotation: Dashboard → Wazuh → Circuits → Alerts cycling on configurable interval
+- TopNav: KIOSK label + countdown (e.g. "29s") + PAUSE/RESUME button + cyan progress bar at bottom of nav
+- Settings: KIOSK AUTO-ROTATION section at top — enable/disable toggle + interval input (10–300s, default 30s)
+- Backend: kiosk_enabled (bool) + kiosk_interval (int) added to SettingsUpdate model + migration
+- Implementation: stable single setInterval in Layout.jsx using refs for all dynamic values (no re-creation on state change)
+- 100% test pass rate (11 tests: toggle, countdown, progress bar, pause/resume, actual rotation /dashboard→/wazuh)
+
 ## P0 — Next Priority (needs user credentials)
 - [ ] WUG email IMAP (mail server credentials needed in Settings)
 - [ ] Vivantio live tickets (API URL + key needed)
