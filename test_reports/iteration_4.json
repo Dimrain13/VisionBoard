@@ -1,0 +1,38 @@
+{
+  "summary": "Full kiosk auto-rotation feature testing (backend + frontend). All 6 backend tests and all 5 frontend kiosk scenarios passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_kiosk.py",
+    "/app/test_reports/pytest/kiosk_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_kiosk.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100%"},
+  "test_credentials": "No auth required",
+  "seed_data_creation": "Set kiosk_enabled=true, kiosk_interval=10 via PUT /api/settings for testing",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Kiosk feature fully verified. kiosk_enabled=true, kiosk_interval=10 currently saved in MongoDB. All kiosk scenarios pass: toggle in settings, countdown timer, progress bar, pause/resume, auto-rotation from /dashboard to /wazuh in 10s.",
+  "verified_requirements": {
+    "settings_kiosk_toggle": "PASS - data-testid='settings-kiosk_enabled-toggle' toggles ROTATION ENABLED/DISABLED",
+    "settings_kiosk_interval": "PASS - data-testid='settings-kiosk_interval' input accepts value 10",
+    "settings_save_persists": "PASS - GET /api/settings after save returns kiosk_enabled=true, kiosk_interval=10",
+    "topnav_pause_btn_visible": "PASS - data-testid='kiosk-pause-btn' visible when kiosk_enabled=true",
+    "topnav_countdown": "PASS - data-testid='kiosk-countdown' counts down from interval (9s, 6s...)",
+    "topnav_progress_bar": "PASS - data-testid='kiosk-progress-bar' visible at bottom of nav",
+    "auto_rotation": "PASS - navigated /dashboard → /wazuh after 10s",
+    "pause_stops_countdown": "PASS - countdown freezes when paused, PAUSED text shown",
+    "pause_btn_text_change": "PASS - button changes PAUSE → RESUME when paused",
+    "resume_restarts_countdown": "PASS - countdown resumes after clicking RESUME",
+    "settings_persist_across_nav": "PASS - kiosk controls appear on dashboard because settings loaded from backend on mount"
+  }
+}

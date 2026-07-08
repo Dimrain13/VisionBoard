@@ -69,6 +69,8 @@ class SettingsUpdate(BaseModel):
     wazuh_indexer_username: Optional[str] = None
     wazuh_indexer_password: Optional[str] = None
     wazuh_enabled: Optional[bool] = None
+    kiosk_enabled: Optional[bool] = None
+    kiosk_interval: Optional[int] = None
 
 # ─── UniFi Syslog ─────────────────────────────────────────────────
 def parse_unifi_syslog(raw: str) -> dict:
@@ -311,6 +313,7 @@ async def seed_demo_data():
             "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000, "wazuh_indexer_port": 9200,
             "wazuh_username": "", "wazuh_password": "", "wazuh_indexer_username": "",
             "wazuh_indexer_password": "", "wazuh_enabled": False,
+            "kiosk_enabled": False, "kiosk_interval": 30,
         })
     else:
         # Migrate: ensure Wazuh fields exist for existing installs
@@ -321,6 +324,11 @@ async def seed_demo_data():
                 "wazuh_username": "", "wazuh_password": "", "wazuh_indexer_username": "",
                 "wazuh_indexer_password": "", "wazuh_enabled": False,
             }}
+        )
+        # Migrate: ensure kiosk fields exist for existing installs
+        await db.settings.update_one(
+            {"_id": "app_settings", "kiosk_enabled": {"$exists": False}},
+            {"$set": {"kiosk_enabled": False, "kiosk_interval": 30}}
         )
 
     if await db.unifi_events.count_documents({}) == 0:

@@ -74,6 +74,62 @@ export default function Settings() {
 
       <div className="overflow-auto flex-1 space-y-3 pr-1">
 
+        {/* Kiosk Rotation */}
+        <Section title="KIOSK AUTO-ROTATION">
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3A3A48", lineHeight: 1.9, marginBottom: 12 }}>
+              When enabled, the display automatically cycles through:&nbsp;
+              <span style={{ color: "#00E5FF" }}>DASHBOARD → WAZUH → CIRCUITS → ALERTS</span>
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div
+                data-testid="settings-kiosk_enabled-toggle"
+                onClick={() => set("kiosk_enabled", !settings.kiosk_enabled)}
+                className="cursor-pointer"
+                style={{
+                  position: "relative",
+                  width: 36,
+                  height: 18,
+                  background: settings.kiosk_enabled ? "rgba(0,229,255,0.15)" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${settings.kiosk_enabled ? "rgba(0,229,255,0.4)" : "#1C1C24"}`,
+                  transition: "all 150ms ease",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                <div style={{
+                  width: 12,
+                  height: 12,
+                  background: settings.kiosk_enabled ? "#00E5FF" : "#3A3A48",
+                  position: "absolute",
+                  top: 2,
+                  left: settings.kiosk_enabled ? 20 : 2,
+                  transition: "left 150ms ease",
+                  boxShadow: settings.kiosk_enabled ? "0 0 6px #00E5FF" : "none",
+                }} />
+              </div>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: settings.kiosk_enabled ? "#00E5FF" : "#3A3A48", letterSpacing: "0.1em" }}>
+                {settings.kiosk_enabled ? "ROTATION ENABLED" : "ROTATION DISABLED"}
+              </span>
+            </div>
+          </div>
+          <div style={{ maxWidth: 260 }}>
+            <div className="section-label" style={{ marginBottom: 6 }}>ROTATION INTERVAL (SECONDS)</div>
+            <input
+              data-testid="settings-kiosk_interval"
+              type="number"
+              min="10"
+              max="300"
+              className="input"
+              value={settings.kiosk_interval ?? 30}
+              onChange={e => set("kiosk_interval", parseInt(e.target.value) || 30)}
+            />
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: "#3A3A48", marginTop: 6, letterSpacing: "0.06em" }}>
+              Min: 10s · Max: 300s · Default: 30s
+            </div>
+          </div>
+        </Section>
+
         {/* Display */}
         <Section title="DISPLAY">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { format } from "date-fns";
 import {
-  Activity, Map, ShieldAlert, Network, Wifi, CheckSquare, Terminal, Settings, Clock,
+  Activity, Map, ShieldAlert, Network, Wifi, CheckSquare, Terminal, Settings,
+  Clock, Pause, Play, RotateCw,
 } from "lucide-react";
 
 const TABS = [
@@ -16,12 +17,23 @@ const TABS = [
   { path: "/settings",   label: "SETTINGS",      Icon: Settings    },
 ];
 
-export default function TopNav() {
+export default function TopNav({
+  kioskEnabled  = false,
+  isPaused      = false,
+  onTogglePause = () => {},
+  kioskTick     = 0,
+  kioskInterval = 30,
+}) {
   const [time, setTime] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  const progressPct = kioskInterval > 0
+    ? Math.min((kioskTick / kioskInterval) * 100, 100)
+    : 0;
+  const remaining   = Math.max(kioskInterval - kioskTick, 0);
 
   return (
     <nav
@@ -33,6 +45,7 @@ export default function TopNav() {
         display: "flex",
         alignItems: "stretch",
         flexShrink: 0,
+        position: "relative",          /* needed for progress bar */
       }}
     >
       {/* Brand */}
@@ -45,33 +58,15 @@ export default function TopNav() {
         gap: 12,
         minWidth: 170,
       }}>
-        {/* Diamond icon */}
         <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, flexShrink: 0 }}>
-          <div style={{
-            position: "absolute", inset: 3,
-            border: "1px solid rgba(0,229,255,0.45)",
-            transform: "rotate(45deg)",
-          }} />
+          <div style={{ position: "absolute", inset: 3, border: "1px solid rgba(0,229,255,0.45)", transform: "rotate(45deg)" }} />
           <Terminal size={13} style={{ color: "#00E5FF", position: "relative", zIndex: 1 }} />
         </div>
         <div>
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 12,
-            fontWeight: 700,
-            color: "#00E5FF",
-            letterSpacing: "0.28em",
-            lineHeight: 1.2,
-          }}>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 700, color: "#00E5FF", letterSpacing: "0.28em", lineHeight: 1.2 }}>
             IT CMD CTR
           </div>
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 8,
-            color: "#3A3A48",
-            letterSpacing: "0.18em",
-            textTransform: "uppercase",
-          }}>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "#3A3A48", letterSpacing: "0.18em", textTransform: "uppercase" }}>
             NOC OPERATIONS
           </div>
         </div>
@@ -92,24 +87,67 @@ export default function TopNav() {
         ))}
       </div>
 
-      {/* Right: Status + Clock */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 20,
-        padding: "0 20px",
-        borderLeft: "1px solid #1C1C24",
-        flexShrink: 0,
-      }}>
+      {/* Right section */}
+      <div style={{ display: "flex", alignItems: "center", gap: 0, borderLeft: "1px solid #1C1C24", flexShrink: 0 }}>
+
+        {/* Kiosk controls — only shown when kiosk mode is enabled */}
+        {kioskEnabled && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "0 16px",
+              borderRight: "1px solid #1C1C24",
+              height: "100%",
+            }}
+          >
+            <RotateCw size={10} style={{ color: isPaused ? "#3A3A48" : "#00E5FF", opacity: isPaused ? 0.4 : 1 }} />
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#3A3A48", letterSpacing: "0.15em" }}>
+              KIOSK
+            </span>
+
+            {/* Countdown */}
+            {!isPaused ? (
+              <span
+                data-testid="kiosk-countdown"
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#00E5FF",
+                  letterSpacing: "0.04em",
+                  minWidth: 34,
+                  textAlign: "right",
+                }}
+              >
+                {remaining}s
+              </span>
+            ) : (
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#3A3A48", letterSpacing: "0.1em" }}>
+                PAUSED
+              </span>
+            )}
+
+            {/* Pause / Resume button */}
+            <button
+              data-testid="kiosk-pause-btn"
+              onClick={onTogglePause}
+              className="btn"
+              style={{ padding: "4px 10px", gap: 5 }}
+              title={isPaused ? "Resume auto-rotation" : "Pause auto-rotation"}
+            >
+              {isPaused
+                ? <><Play  size={10} /> RESUME</>
+                : <><Pause size={10} /> PAUSE</>
+              }
+            </button>
+          </div>
+        )}
+
         {/* Node status */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }} data-testid="system-status">
-          <span style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 9,
-            color: "#3A3A48",
-            letterSpacing: "0.15em",
-            textTransform: "uppercase",
-          }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 16px", borderRight: "1px solid #1C1C24", height: "100%" }} data-testid="system-status">
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#3A3A48", letterSpacing: "0.15em", textTransform: "uppercase" }}>
             NODE
           </span>
           <div style={{ position: "relative", display: "flex", width: 8, height: 8 }}>
@@ -122,34 +160,47 @@ export default function TopNav() {
         </div>
 
         {/* Clock */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 20px", height: "100%" }}>
           <Clock size={12} style={{ color: "#00E5FF", opacity: 0.6 }} />
           <div>
             <div
               data-testid="live-clock"
-              style={{
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 14,
-                fontWeight: 700,
-                color: "#E2E2E5",
-                letterSpacing: "0.06em",
-                lineHeight: 1.2,
-              }}
+              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: "#E2E2E5", letterSpacing: "0.06em", lineHeight: 1.2 }}
             >
               {format(time, "HH:mm:ss")}
             </div>
-            <div style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 8,
-              color: "#3A3A48",
-              letterSpacing: "0.1em",
-              lineHeight: 1,
-            }}>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "#3A3A48", letterSpacing: "0.1em", lineHeight: 1 }}>
               {format(time, "yyyy-MM-dd")}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Progress bar — slides from left to right during rotation countdown */}
+      {kioskEnabled && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: "#1C1C24",
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            data-testid="kiosk-progress-bar"
+            style={{
+              height: "100%",
+              width: `${progressPct}%`,
+              background: isPaused ? "#3A3A48" : "#00E5FF",
+              transition: isPaused ? "none" : "width 1s linear",
+              boxShadow: isPaused ? "none" : "0 0 6px #00E5FF",
+            }}
+          />
+        </div>
+      )}
     </nav>
   );
 }
