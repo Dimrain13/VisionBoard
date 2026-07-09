@@ -285,38 +285,39 @@ async def _wazuh_fetch_agents(settings: dict) -> list:
 
 
 # ─── Vendor Status ────────────────────────────────────────────────
-# status_url: public Statuspage.io JSON endpoint (fallback when no DD token).
-#   - Set to None for services with no public API or those that require auth.
-#   - Downdetector is always tried first when credentials are configured.
+# ping_url: a public endpoint owned by the vendor — HTTP HEAD checked as fallback.
+#   Any 1xx–4xx response = operational (service is answering, auth walls are fine).
+#   5xx = major_outage. Timeout = unknown (conservative — won't false-alarm).
+#   DD Enterprise is always tried first when credentials are configured.
 # dd_slug: slug used by Downdetector — matches the path segment on downdetector.com/status/{slug}/
 VENDORS = [
     # ── Security & Endpoint ────────────────────────────────────────────────────────
-    {"id": "crowdstrike",  "name": "CrowdStrike",         "category": "Security",  "dd_slug": "crowdstrike",              "status_url": "https://status.crowdstrike.com/api/v2/summary.json",   "web_url": "https://status.crowdstrike.com"},
-    {"id": "ninjaone",     "name": "NinjaOne",             "category": "Security",  "dd_slug": "ninjaone",                 "status_url": None,                                                    "web_url": "https://status.ninjarmm.com"},
-    {"id": "zscaler",      "name": "Zscaler",              "category": "Security",  "dd_slug": "zscaler",                  "status_url": None,                                                    "web_url": "https://trust.zscaler.com"},
-    {"id": "keeper",       "name": "Keeper",               "category": "Security",  "dd_slug": "keeper",                   "status_url": "https://statuspage.keeper.io/api/v2/summary.json",     "web_url": "https://statuspage.keeper.io"},
-    {"id": "mimecast",     "name": "Mimecast",             "category": "Security",  "dd_slug": "mimecast",                 "status_url": None,                                                    "web_url": "https://status.mimecast.com"},
-    {"id": "cloudflare",   "name": "Cloudflare",           "category": "Security",  "dd_slug": "cloudflare",               "status_url": "https://www.cloudflarestatus.com/api/v2/summary.json", "web_url": "https://www.cloudflarestatus.com"},
-    # ── Microsoft 365 — no public JSON API; relies entirely on Downdetector ────────
-    {"id": "microsoft365", "name": "Microsoft 365",        "category": "Microsoft", "dd_slug": "microsoft-365",            "status_url": None,                                                    "web_url": "https://status.office365.com"},
-    {"id": "dynamics365",  "name": "Dynamics 365",         "category": "Microsoft", "dd_slug": "microsoft-dynamics-365",   "status_url": None,                                                    "web_url": "https://admin.powerplatform.microsoft.com/"},
-    {"id": "outlook",      "name": "Outlook",              "category": "Microsoft", "dd_slug": "outlook",                  "status_url": None,                                                    "web_url": "https://status.office365.com"},
-    {"id": "teams",        "name": "Microsoft Teams",      "category": "Microsoft", "dd_slug": "teams",                    "status_url": None,                                                    "web_url": "https://status.office365.com"},
+    {"id": "crowdstrike",  "name": "CrowdStrike",       "category": "Security",  "dd_slug": "crowdstrike",            "ping_url": "https://api.crowdstrike.com",                        "web_url": "https://status.crowdstrike.com"},
+    {"id": "ninjaone",     "name": "NinjaOne",           "category": "Security",  "dd_slug": "ninjaone",               "ping_url": "https://app.ninjarmm.com",                           "web_url": "https://status.ninjarmm.com"},
+    {"id": "zscaler",      "name": "Zscaler",            "category": "Security",  "dd_slug": "zscaler",                "ping_url": "https://www.zscaler.com",                           "web_url": "https://trust.zscaler.com"},
+    {"id": "keeper",       "name": "Keeper",             "category": "Security",  "dd_slug": "keeper",                 "ping_url": "https://keepersecurity.com",                         "web_url": "https://statuspage.keeper.io"},
+    {"id": "mimecast",     "name": "Mimecast",           "category": "Security",  "dd_slug": "mimecast",               "ping_url": "https://login.mimecast.com",                         "web_url": "https://status.mimecast.com"},
+    {"id": "cloudflare",   "name": "Cloudflare",         "category": "Security",  "dd_slug": "cloudflare",             "ping_url": "https://cloudflare.com",                            "web_url": "https://www.cloudflarestatus.com"},
+    # ── Microsoft ─────────────────────────────────────────────────────────────────
+    {"id": "microsoft365", "name": "Microsoft 365",      "category": "Microsoft", "dd_slug": "microsoft-365",          "ping_url": "https://portal.office.com",                         "web_url": "https://status.office365.com"},
+    {"id": "dynamics365",  "name": "Dynamics 365",       "category": "Microsoft", "dd_slug": "microsoft-dynamics-365", "ping_url": "https://admin.powerplatform.microsoft.com",         "web_url": "https://admin.powerplatform.microsoft.com/"},
+    {"id": "outlook",      "name": "Outlook",            "category": "Microsoft", "dd_slug": "outlook",                "ping_url": "https://outlook.office365.com",                     "web_url": "https://status.office365.com"},
+    {"id": "teams",        "name": "Microsoft Teams",    "category": "Microsoft", "dd_slug": "teams",                  "ping_url": "https://teams.microsoft.com",                       "web_url": "https://status.office365.com"},
     # ── AI Services ───────────────────────────────────────────────────────────────
-    {"id": "openai",       "name": "OpenAI",               "category": "AI",        "dd_slug": "openai",                   "status_url": "https://status.openai.com/api/v2/summary.json",        "web_url": "https://status.openai.com"},
-    {"id": "gemini",       "name": "Google Gemini",        "category": "AI",        "dd_slug": "google-bard",              "status_url": None,                                                    "web_url": "https://gemini.google.com"},
-    {"id": "claude",       "name": "Claude (Anthropic)",   "category": "AI",        "dd_slug": "claude",                   "status_url": "https://status.anthropic.com/api/v2/summary.json",     "web_url": "https://anthropicstatus.com"},
+    {"id": "openai",       "name": "OpenAI",             "category": "AI",        "dd_slug": "openai",                 "ping_url": "https://api.openai.com",                            "web_url": "https://status.openai.com"},
+    {"id": "gemini",       "name": "Google Gemini",      "category": "AI",        "dd_slug": "google-bard",            "ping_url": "https://generativelanguage.googleapis.com",         "web_url": "https://gemini.google.com"},
+    {"id": "claude",       "name": "Claude (Anthropic)", "category": "AI",        "dd_slug": "claude",                 "ping_url": "https://api.anthropic.com",                         "web_url": "https://anthropicstatus.com"},
     # ── Cloud & Infrastructure ────────────────────────────────────────────────────
-    {"id": "aws",          "name": "AWS",                  "category": "Cloud",     "dd_slug": "amazon-web-services",      "status_url": None,                                                    "web_url": "https://health.aws.amazon.com/health/status"},
-    {"id": "google",       "name": "Google",               "category": "Cloud",     "dd_slug": "google",                   "status_url": None,                                                    "web_url": "https://workspace.google.com/status"},
-    {"id": "unifi",        "name": "UniFi (Ubiquiti)",     "category": "Cloud",     "dd_slug": "ubiquiti",                 "status_url": "https://status.ui.com/api/v2/summary.json",            "web_url": "https://status.ui.com"},
+    {"id": "aws",          "name": "AWS",                "category": "Cloud",     "dd_slug": "amazon-web-services",    "ping_url": "https://aws.amazon.com",                            "web_url": "https://health.aws.amazon.com/health/status"},
+    {"id": "google",       "name": "Google",             "category": "Cloud",     "dd_slug": "google",                 "ping_url": "https://www.google.com",                            "web_url": "https://workspace.google.com/status"},
+    {"id": "unifi",        "name": "UniFi (Ubiquiti)",   "category": "Cloud",     "dd_slug": "ubiquiti",               "ping_url": "https://unifi.ui.com",                              "web_url": "https://status.ui.com"},
     # ── Telecom ───────────────────────────────────────────────────────────────────
-    {"id": "att",          "name": "AT&T",                 "category": "Telecom",   "dd_slug": "att",                      "status_url": None,                                                    "web_url": "https://downdetector.com/status/att/"},
-    {"id": "verizon",      "name": "Verizon",              "category": "Telecom",   "dd_slug": "verizon",                  "status_url": None,                                                    "web_url": "https://downdetector.com/status/verizon/"},
-    {"id": "tmobile",      "name": "T-Mobile",             "category": "Telecom",   "dd_slug": "t-mobile",                 "status_url": None,                                                    "web_url": "https://downdetector.com/status/t-mobile/"},
-    # ── Consumer / Finance ────────────────────────────────────────────────────────
-    {"id": "apple",        "name": "Apple",                "category": "Other",     "dd_slug": "apple",                    "status_url": None,                                                    "web_url": "https://www.apple.com/support/systemstatus/"},
-    {"id": "chase",        "name": "J.P. Morgan Chase",    "category": "Other",     "dd_slug": "chase",                    "status_url": None,                                                    "web_url": "https://downdetector.com/status/chase/"},
+    {"id": "att",          "name": "AT&T",               "category": "Telecom",   "dd_slug": "att",                    "ping_url": "https://www.att.com",                               "web_url": "https://downdetector.com/status/att/"},
+    {"id": "verizon",      "name": "Verizon",            "category": "Telecom",   "dd_slug": "verizon",                "ping_url": "https://www.verizon.com",                           "web_url": "https://downdetector.com/status/verizon/"},
+    {"id": "tmobile",      "name": "T-Mobile",           "category": "Telecom",   "dd_slug": "t-mobile",               "ping_url": "https://www.t-mobile.com",                          "web_url": "https://downdetector.com/status/t-mobile/"},
+    # ── Other ─────────────────────────────────────────────────────────────────────
+    {"id": "apple",        "name": "Apple",              "category": "Other",     "dd_slug": "apple",                  "ping_url": "https://www.apple.com",                             "web_url": "https://www.apple.com/support/systemstatus/"},
+    {"id": "chase",        "name": "J.P. Morgan Chase",  "category": "Other",     "dd_slug": "chase",                  "ping_url": "https://www.chase.com",                             "web_url": "https://downdetector.com/status/chase/"},
 ]
 
 # ─── Downdetector API helpers ──────────────────────────────────────────────────
@@ -395,12 +396,12 @@ async def _dd_get_company_id(vendor_id: str, slug: str, token: str) -> Optional[
 
 
 async def check_vendor_status(vendor: dict, dd_token: Optional[str]) -> dict:
-    vendor_id   = vendor["id"]
-    status      = "unknown"
-    source      = "none"
-    now_iso     = datetime.now(timezone.utc).isoformat()
+    vendor_id = vendor["id"]
+    status    = "unknown"
+    source    = "none"
+    now_iso   = datetime.now(timezone.utc).isoformat()
 
-    # Downdetector Enterprise API — only source of truth
+    # 1. Downdetector Enterprise — highest fidelity (crowd-sourced, real-time)
     if dd_token and vendor.get("dd_slug"):
         try:
             company_id = await _dd_get_company_id(vendor_id, vendor["dd_slug"], dd_token)
@@ -414,8 +415,28 @@ async def check_vendor_status(vendor: dict, dd_token: Optional[str]) -> dict:
                         dd_status = r.json().get("status", "")
                         status = {"success": "operational", "warning": "minor_outage", "danger": "major_outage"}.get(dd_status, "unknown")
                         source = "downdetector"
+                        return {**vendor, "status": status, "source": source, "last_checked": now_iso}
         except Exception as e:
             logger.debug(f"DD check failed for {vendor_id}: {e}")
+
+    # 2. HTTP ping against the vendor's own public endpoint
+    #    1xx–4xx = operational (service responding; auth walls count as up)
+    #    5xx     = major_outage
+    #    timeout / error = unknown (conservative — won't false-alarm)
+    ping_url = vendor.get("ping_url")
+    if ping_url:
+        try:
+            async with httpx.AsyncClient(timeout=6, verify=False, follow_redirects=True) as c:
+                r = await c.head(ping_url)
+                status = "major_outage" if r.status_code >= 500 else "operational"
+                source = "http_check"
+        except httpx.TimeoutException:
+            status  = "unknown"
+            source  = "http_check"
+        except Exception as e:
+            logger.debug(f"HTTP ping failed for {vendor_id} ({ping_url}): {e}")
+            status = "unknown"
+            source = "http_check"
 
     return {**vendor, "status": status, "source": source, "last_checked": now_iso}
 
