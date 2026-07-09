@@ -200,16 +200,21 @@ export default function Settings() {
 
         {/* Vivantio */}
         <Section title="VIVANTIO ITSM">
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
             <div>
-              <div className="section-label mb-1.5">API URL</div>
-              <input data-testid="settings-vivantio_api_url" placeholder="https://tenant.vivantio.com/api" className="input"
+              <div className="section-label mb-1.5">API BASE URL</div>
+              <input data-testid="settings-vivantio_api_url" placeholder="https://tenant.api.vivantio.com" className="input"
                 value={settings.vivantio_api_url || ""} onChange={e => set("vivantio_api_url", e.target.value)} />
             </div>
             <div>
-              <div className="section-label mb-1.5">API KEY</div>
-              <input data-testid="settings-vivantio_api_key" type="password" placeholder="Your Vivantio API key" className="input"
+              <div className="section-label mb-1.5">USERNAME</div>
+              <input data-testid="settings-vivantio_api_key" placeholder="api_user@company.com" className="input"
                 value={settings.vivantio_api_key || ""} onChange={e => set("vivantio_api_key", e.target.value)} />
+            </div>
+            <div>
+              <div className="section-label mb-1.5">PASSWORD</div>
+              <input data-testid="settings-vivantio_password" type="password" placeholder="API password" className="input"
+                value={settings.vivantio_password || ""} onChange={e => set("vivantio_password", e.target.value)} />
             </div>
           </div>
         </Section>

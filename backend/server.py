@@ -56,7 +56,8 @@ class SettingsUpdate(BaseModel):
     email_folder: Optional[str] = None
     wug_sender_filter: Optional[str] = None
     vivantio_api_url: Optional[str] = None
-    vivantio_api_key: Optional[str] = None
+    vivantio_api_key: Optional[str] = None   # username for Basic Auth
+    vivantio_password: Optional[str] = None  # password for Basic Auth
     aruba_api_url: Optional[str] = None
     aruba_api_key: Optional[str] = None
     unifi_syslog_port: Optional[int] = None
@@ -308,7 +309,7 @@ async def seed_demo_data():
             "_id": "app_settings", "refresh_interval": 30, "email_enabled": False,
             "email_host": "", "email_port": 993, "email_username": "", "email_password": "",
             "email_folder": "INBOX", "wug_sender_filter": "whatsupgold",
-            "vivantio_api_url": "", "vivantio_api_key": "", "aruba_api_url": "", "aruba_api_key": "",
+            "vivantio_api_url": "", "vivantio_api_key": "", "vivantio_password": "", "aruba_api_url": "", "aruba_api_key": "",
             "unifi_syslog_port": 5140, "unifi_syslog_enabled": True,
             "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000, "wazuh_indexer_port": 9200,
             "wazuh_username": "", "wazuh_password": "", "wazuh_indexer_username": "",
@@ -329,6 +330,20 @@ async def seed_demo_data():
         await db.settings.update_one(
             {"_id": "app_settings", "kiosk_enabled": {"$exists": False}},
             {"$set": {"kiosk_enabled": False, "kiosk_interval": 30}}
+        )
+        # Migrate: ensure vivantio_password exists for existing installs
+        await db.settings.update_one(
+            {"_id": "app_settings", "vivantio_password": {"$exists": False}},
+            {"$set": {"vivantio_password": ""}}
+        )
+        # Seed Vivantio credentials if not already set
+        await db.settings.update_one(
+            {"_id": "app_settings", "vivantio_api_url": {"$in": ["", None]}},
+            {"$set": {
+                "vivantio_api_url": "https://mimilk.api.vivantio.com",
+                "vivantio_api_key": "api_MichiganMilkProducersAssociation_wfF2GF8BfV@mimilk.com",
+                "vivantio_password": "fMAriamiKomAw7zYKaAJ",
+            }}
         )
 
     if await db.unifi_events.count_documents({}) == 0:
@@ -388,8 +403,9 @@ async def poll_email_for_alerts(settings: dict):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await seed_demo_data()
-    email_task  = asyncio.create_task(background_email_poller())
-    aruba_task  = asyncio.create_task(background_aruba_warmer())
+    email_task    = asyncio.create_task(background_email_poller())
+    aruba_task    = asyncio.create_task(background_aruba_warmer())
+    vivantio_task = asyncio.create_task(background_vivantio_warmer())
 
     # Start UniFi syslog UDP listener
     syslog_port = int(os.environ.get("UNIFI_SYSLOG_PORT", "5140"))
@@ -408,6 +424,7 @@ async def lifespan(app: FastAPI):
 
     email_task.cancel()
     aruba_task.cancel()
+    vivantio_task.cancel()
     if transport:
         transport.close()
     try:
@@ -416,6 +433,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await aruba_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await vivantio_task
     except asyncio.CancelledError:
         pass
     mongo_client.close()
@@ -880,5 +901,175 @@ async def get_unifi_events(severity: str = None, limit: int = 200):
 async def clear_unifi_events():
     result = await db.unifi_events.delete_many({})
     return {"deleted": result.deleted_count}
+
+
+# ─── Vivantio Ticketing ───────────────────────────────────────────────────────
+
+_vivantio_cache: dict = {"tickets": None, "ts": 0, "max_id": 27400}
+VIVANTIO_CACHE_TTL = 60  # seconds
+
+VIVANTIO_PRIORITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+
+# Normalize Vivantio's inconsistent priority values to Critical/High/Medium/Low
+_PRIORITY_MAP = {
+    "1": "Critical", "critical": "Critical",
+    "2": "High",     "high": "High",
+    "3": "Medium",   "medium": "Medium", "standard": "Medium",
+    "4": "Low",      "low": "Low",
+}
+
+def _normalize_priority(raw: str) -> str:
+    if not raw:
+        return "Medium"
+    key = raw.strip().split()[0].lower().rstrip("(").rstrip(")")
+    return _PRIORITY_MAP.get(key, _PRIORITY_MAP.get(raw.strip().lower(), "Medium"))
+
+# Statuses that mean the ticket is truly done — exclude from NOC view
+VIVANTIO_CLOSED_STATUSES = {"Merged", "Closed - Promoted", "Promoted", "Resolved", "Closed"}
+
+async def _vivantio_request(url: str, username: str, password: str, path: str, body=None):
+    """Make an authenticated request to the Vivantio API."""
+    import base64
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=20, verify=False) as client:
+        r = await client.post(f"{url.rstrip('/')}/api/{path}", headers=headers, json=body or {})
+        r.raise_for_status()
+        return r.json()
+
+async def _vivantio_find_max_id(url: str, username: str, password: str, start: int) -> int:
+    """Walk forward from start to find the highest existing ticket ID."""
+    step = 100
+    current = start
+    # Walk forward in large steps until we overshoot
+    for _ in range(20):
+        data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{current + step}")
+        if data.get("Found"):
+            current += step
+        else:
+            break
+    # Fine-tune the boundary
+    lo, hi = current, current + step
+    for _ in range(10):
+        if hi - lo <= 1:
+            break
+        mid = (lo + hi) // 2
+        data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{mid}")
+        if data.get("Found"):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+async def _vivantio_fetch_tickets(url: str, username: str, password: str) -> list:
+    """Scan last 200 ticket IDs, return active (non-closed) tickets."""
+    max_id = _vivantio_cache["max_id"]
+
+    # Probe ahead to update max_id
+    probe = max_id + 50
+    data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{probe}")
+    if data.get("Found"):
+        max_id = await _vivantio_find_max_id(url, username, password, probe)
+        _vivantio_cache["max_id"] = max_id
+
+    # Fetch last 200 IDs in one batch call
+    ids = list(range(max_id, max(max_id - 200, 0), -1))
+    raw = await _vivantio_request(url, username, password, "Ticket/SelectList", ids)
+    all_tickets = raw.get("Results", [])
+
+    active = []
+    for t in all_tickets:
+        if t.get("StatusType") == 4:
+            continue
+        if t.get("StatusName") in VIVANTIO_CLOSED_STATUSES:
+            continue
+        priority_raw = t.get("PriorityName", "") or ""
+        priority_key = _normalize_priority(priority_raw)
+        active.append({
+            "id":           t.get("Id"),
+            "display_id":   t.get("DisplayId", str(t.get("Id"))),
+            "title":        t.get("Title", ""),
+            "status":       t.get("StatusName", ""),
+            "priority":     priority_key,
+            "priority_raw": priority_raw,
+            "assigned_to":  t.get("TakenByName") or t.get("OwnerName") or "",
+            "group":        t.get("GroupName", ""),
+            "category":     t.get("CategoryLineage", ""),
+            "type":         t.get("RecordTypeNameSingular", "Ticket"),
+            "opened":       t.get("OpenDate", ""),
+            "updated":      t.get("LastModifiedDate", ""),
+        })
+
+    # Sort: Critical → High → Medium → Low, then newest first
+    active.sort(key=lambda x: (
+        VIVANTIO_PRIORITY_ORDER.get(x["priority"], 99),
+        -(int(x["id"] or 0))
+    ))
+    return active
+
+async def background_vivantio_warmer():
+    """Warm Vivantio ticket cache on startup and refresh every 60s."""
+    await asyncio.sleep(8)  # Let server fully start + Aruba warmer begin
+    while True:
+        try:
+            settings = await db.settings.find_one({"_id": "app_settings"})
+            url      = (settings or {}).get("vivantio_api_url", "")
+            username = (settings or {}).get("vivantio_api_key", "")
+            password = (settings or {}).get("vivantio_password", "")
+            if url and username and password:
+                tickets = await _vivantio_fetch_tickets(url, username, password)
+                _vivantio_cache["tickets"] = tickets
+                _vivantio_cache["ts"]      = time.time()
+                logger.info(f"Vivantio cache refreshed: {len(tickets)} active tickets")
+        except Exception as e:
+            logger.warning(f"Vivantio warmer error: {e}")
+        await asyncio.sleep(60)
+
+@api_router.get("/vivantio/tickets")
+async def get_vivantio_tickets():
+    settings = await db.settings.find_one({"_id": "app_settings"})
+    url      = (settings or {}).get("vivantio_api_url", "")
+    username = (settings or {}).get("vivantio_api_key", "")
+    password = (settings or {}).get("vivantio_password", "")
+
+    if not url or not username or not password:
+        return {"configured": False, "tickets": [], "total": 0,
+                "by_priority": {}, "by_status": {}}
+
+    # Return from cache if fresh
+    if _vivantio_cache["tickets"] is not None and \
+       (time.time() - _vivantio_cache["ts"]) < VIVANTIO_CACHE_TTL:
+        tickets = _vivantio_cache["tickets"]
+        return _vivantio_summary(tickets, configured=True)
+
+    # Otherwise fetch live
+    try:
+        tickets = await _vivantio_fetch_tickets(url, username, password)
+        _vivantio_cache["tickets"] = tickets
+        _vivantio_cache["ts"]      = time.time()
+        return _vivantio_summary(tickets, configured=True)
+    except Exception as e:
+        logger.error(f"Vivantio tickets error: {e}")
+        cached = _vivantio_cache.get("tickets")
+        if cached:
+            return {**_vivantio_summary(cached, configured=True), "stale": True}
+        return {"configured": True, "error": str(e)[:120], "tickets": [], "total": 0,
+                "by_priority": {}, "by_status": {}}
+
+def _vivantio_summary(tickets: list, configured: bool) -> dict:
+    by_priority = {}
+    by_status   = {}
+    for t in tickets:
+        by_priority[t["priority"]] = by_priority.get(t["priority"], 0) + 1
+        by_status[t["status"]]     = by_status.get(t["status"], 0) + 1
+    return {
+        "configured":  configured,
+        "tickets":     tickets,
+        "total":       len(tickets),
+        "by_priority": by_priority,
+        "by_status":   by_status,
+    }
+
+
 
 app.include_router(api_router)

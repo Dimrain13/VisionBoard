@@ -1,206 +1,213 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
-import { Plus, Edit2, X } from "lucide-react";
-import { format, parseISO } from "date-fns";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const PRI_COLOR  = { critical: "#FF2A2A", high: "#FF6B14", medium: "#FFB014", low: "#3A3A48" };
-const PRI_BADGE  = { critical: "badge-red", high: "badge-amber", medium: "badge-amber", low: "badge-zinc" };
-
-const STATUS_CFG = {
-  open:        { badge: "badge-blue",  label: "OPEN"        },
-  in_progress: { badge: "badge-amber", label: "IN PROGRESS" },
-  resolved:    { badge: "badge-green", label: "RESOLVED"    },
-  closed:      { badge: "badge-zinc",  label: "CLOSED"      },
+const PRIORITY_COLOR  = { Critical: "#FF2A2A", High: "#FF7A00", Medium: "#FFB014", Low: "#3A3A48" };
+const PRIORITY_ORDER  = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+const STATUS_BADGE_CLS = {
+  "Open":               "badge-green",
+  "In Progress":        "badge-cyan",
+  "Pending":            "badge-amber",
+  "Waiting On User":    "badge-amber",
+  "Waiting on 3rd Party": "badge-amber",
 };
 
-const EMPTY = { title: "", description: "", priority: "medium", status: "open", category: "", assigned_to: "", site: "" };
+function timeAgo(iso) {
+  if (!iso) return "";
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60)   return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
 
 export default function Tickets() {
-  const [tickets, setTickets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState(EMPTY);
-  const [filterStatus, setFilterStatus] = useState("");
+  const [data,     setData]     = useState(null);
+  const [loading,  setLoading]  = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [filter,   setFilter]   = useState("all"); // all | critical | high
 
-  const load = useCallback(async () => {
-    try {
-      const params = filterStatus ? { status: filterStatus } : {};
-      const res = await axios.get(`${API}/tickets`, { params });
-      setTickets(res.data.items);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, [filterStatus]);
+  useEffect(() => {
+    const fetch = () =>
+      axios.get(`${API}/vivantio/tickets`, { timeout: 30000 })
+        .then(r => setData(r.data))
+        .catch(e => console.error("Tickets error:", e))
+        .finally(() => setLoading(false));
+    fetch();
+    const iv = setInterval(fetch, 60000);
+    return () => clearInterval(iv);
+  }, []);
 
-  useEffect(() => { load(); const iv = setInterval(load, 30000); return () => clearInterval(iv); }, [load]);
+  const tickets = data?.tickets || [];
+  const shown   = filter === "all"     ? tickets
+                : filter === "critical" ? tickets.filter(t => t.priority === "Critical")
+                : tickets.filter(t => t.priority === "High" || t.priority === "Critical");
 
-  const submit = async () => {
-    if (editId) await axios.put(`${API}/tickets/${editId}`, form);
-    else await axios.post(`${API}/tickets`, form);
-    setShowForm(false); setEditId(null); setForm(EMPTY); load();
-  };
-
-  const openEdit = (t) => {
-    setForm({ title: t.title, description: t.description || "", priority: t.priority, status: t.status, category: t.category || "", assigned_to: t.assigned_to || "", site: t.site || "" });
-    setEditId(t.id); setShowForm(true);
-  };
-
-  const counts = {
-    open: tickets.filter(t => t.status === "open").length,
-    in_progress: tickets.filter(t => t.status === "in_progress").length,
-    critical: tickets.filter(t => t.priority === "critical").length,
-  };
+  const critCount = (data?.by_priority?.Critical || 0);
+  const highCount = (data?.by_priority?.High     || 0);
 
   return (
-    <div className="h-full flex flex-col gap-4">
+    <div className="h-full flex flex-col gap-3">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="section-label mb-1.5">Vivantio ITSM</div>
-          <h1 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.12em" }}>
-            TICKET QUEUE
-          </h1>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+        <h1 style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:13, fontWeight:700, color:"#E2E2E5", letterSpacing:"0.18em" }}>
+          VIVANTIO TICKETS
+        </h1>
+        <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+          {data?.stale && (
+            <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color:"#FFB014" }}>CACHED DATA</span>
+          )}
+          {loading && (
+            <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color:"#3A3A48" }}>LOADING...</span>
+          )}
         </div>
-        <button data-testid="add-ticket-btn" onClick={() => { setForm(EMPTY); setEditId(null); setShowForm(true); }} className="btn btn-primary">
-          <Plus size={11} /> NEW TICKET
-        </button>
       </div>
 
-      {/* KPI Row */}
-      <div className="grid grid-cols-3 gap-3">
-        {[["OPEN", counts.open, "#00E5FF"], ["IN PROGRESS", counts.in_progress, "#FFB014"], ["CRITICAL PRIORITY", counts.critical, "#FF2A2A"]].map(([l, v, c]) => (
-          <div key={l} className="card p-4 text-center" style={{ borderLeft: `2px solid ${c}` }}>
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 30, fontWeight: 700, color: c, lineHeight: 1 }}>{v}</div>
-            <div className="section-label mt-2">{l}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div className="flex items-center gap-2">
-        <span className="section-label">FILTER:</span>
-        {[["", "ALL"], ["open", "OPEN"], ["in_progress", "IN PROGRESS"], ["resolved", "RESOLVED"], ["closed", "CLOSED"]].map(([v, l]) => (
-          <button key={l} data-testid={`ticket-filter-${v || "all"}`} onClick={() => setFilterStatus(v)}
-            className="btn"
-            style={{ color: filterStatus === v ? "#FAFAFA" : "#27272A", borderColor: filterStatus === v ? "#3F3F46" : "transparent" }}>
-            {l}
-          </button>
-        ))}
-      </div>
-
-      {/* Tickets grid */}
-      <div className="flex-1 overflow-auto">
-        {loading ? (
-          <div className="grid grid-cols-2 gap-3">
-            {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-32" />)}
-          </div>
-        ) : tickets.length === 0 ? (
-          <div className="h-40 flex items-center justify-center" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#1F1F23", letterSpacing: "0.2em" }}>
-            [ NO TICKETS FOUND ]
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {tickets.map(t => {
-              const ss = STATUS_CFG[t.status] || STATUS_CFG.open;
-              return (
-                <div key={t.id} data-testid={`ticket-card-${t.id}`}
-                  className="card p-4"
-                  style={{ borderLeft: `2px solid ${PRI_COLOR[t.priority] || "#27272A"}` }}>
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: "#27272A", letterSpacing: "0.08em" }}>{t.ticket_number}</span>
-                      <span className={`badge ${ss.badge}`}>{ss.label}</span>
-                    </div>
-                    <button data-testid={`edit-ticket-${t.id}`} onClick={() => openEdit(t)}
-                      className="btn flex-shrink-0" style={{ padding: "3px 7px", borderColor: "transparent" }}>
-                      <Edit2 size={10} />
-                    </button>
-                  </div>
-                  <h3 style={{ fontSize: 13, fontWeight: 500, color: "#D4D4D8", lineHeight: 1.4, marginBottom: 4 }}>{t.title}</h3>
-                  {t.description && (
-                    <p style={{ fontSize: 11, color: "#3F3F46", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                      {t.description}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2 mt-3 flex-wrap"
-                    style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#27272A", letterSpacing: "0.05em" }}>
-                    <span className={`badge ${PRI_BADGE[t.priority] || "badge-zinc"}`}>{t.priority.toUpperCase()}</span>
-                    {t.site && <span>{t.site}</span>}
-                    {t.assigned_to && <><span>·</span><span>{t.assigned_to}</span></>}
-                    {t.category && <><span>·</span><span>{t.category}</span></>}
-                    <span>· {format(parseISO(t.created_at), "MMM dd")}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Modal */}
-      {showForm && (
-        <div className="modal-backdrop">
-          <div className="card p-6" style={{ width: "100%", maxWidth: 520 }}>
-            <div className="flex items-center justify-between mb-5">
-              <h3 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600, color: "#FAFAFA", letterSpacing: "0.18em" }}>
-                {editId ? "// EDIT TICKET" : "// NEW TICKET"}
-              </h3>
-              <button onClick={() => setShowForm(false)} className="btn" style={{ padding: "4px 8px", borderColor: "transparent" }}>
-                <X size={14} />
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <div className="section-label mb-1.5">TITLE</div>
-                <input data-testid="ticket-title-input" className="input" placeholder="Ticket title"
-                  value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+      {!data?.configured && !loading ? (
+        <div className="card" style={{ display:"flex", alignItems:"center", justifyContent:"center", flex:1 }}>
+          <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:11, color:"#3A3A48" }}>
+            VIVANTIO NOT CONFIGURED — ADD CREDENTIALS IN SETTINGS
+          </span>
+        </div>
+      ) : (
+        <>
+          {/* KPI row */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:12, flexShrink:0 }}>
+            {[
+              { label:"TOTAL OPEN",  value: data?.total ?? "—",     color:"#00E5FF" },
+              { label:"CRITICAL",    value: critCount,               color:"#FF2A2A" },
+              { label:"HIGH",        value: highCount,               color:"#FF7A00" },
+              { label:"MEDIUM/LOW",  value: (data?.total || 0) - critCount - highCount, color:"#3A3A48" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="card" style={{ padding:"14px 16px" }}>
+                <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color:"#3A3A48", letterSpacing:"0.1em", marginBottom:6 }}>{label}</div>
+                <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:28, fontWeight:700, color, lineHeight:1 }}>{value}</div>
               </div>
-              <div>
-                <div className="section-label mb-1.5">DESCRIPTION</div>
-                <textarea data-testid="ticket-description-input" className="input" style={{ height: 72, resize: "none" }} placeholder="Details..."
-                  value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {[{ label: "PRIORITY", key: "priority", opts: ["critical","high","medium","low"] },
-                  { label: "STATUS", key: "status", opts: ["open","in_progress","resolved","closed"] }].map(({ label, key, opts }) => (
-                  <div key={key}>
-                    <div className="section-label mb-1.5">{label}</div>
-                    <select data-testid={`ticket-${key}-select`} className="input"
-                      value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}>
-                      {opts.map(o => <option key={o} value={o}>{o.replace("_"," ").toUpperCase()}</option>)}
-                    </select>
-                  </div>
+            ))}
+          </div>
+
+          {/* Filter tabs + list */}
+          <div className="flex-1 flex gap-3 min-h-0">
+
+            {/* Ticket table */}
+            <div className="card flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Filter bar */}
+              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 16px", borderBottom:"1px solid #1C1C24", flexShrink:0 }}>
+                {[["all","ALL"],["critical","CRITICAL"],["high","HIGH + CRITICAL"]].map(([key,label]) => (
+                  <button key={key}
+                    data-testid={`ticket-filter-${key}`}
+                    onClick={() => setFilter(key)}
+                    style={{
+                      fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, letterSpacing:"0.1em",
+                      padding:"4px 10px", border:"none", cursor:"pointer",
+                      background: filter === key ? "rgba(0,229,255,0.12)" : "transparent",
+                      color:      filter === key ? "#00E5FF" : "#3A3A48",
+                      borderBottom: filter === key ? "1px solid #00E5FF" : "1px solid transparent",
+                    }}>
+                    {label}
+                  </button>
                 ))}
-                <div>
-                  <div className="section-label mb-1.5">CATEGORY</div>
-                  <input data-testid="ticket-category-input" className="input" placeholder="Network"
-                    value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} />
-                </div>
+                <span style={{ marginLeft:"auto", fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color:"#3A3A48" }}>
+                  {shown.length} TICKETS
+                </span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <div className="section-label mb-1.5">SITE</div>
-                  <input data-testid="ticket-site-input" className="input" placeholder="Site"
-                    value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} />
-                </div>
-                <div>
-                  <div className="section-label mb-1.5">ASSIGNED TO</div>
-                  <input data-testid="ticket-assigned-input" className="input" placeholder="Assignee"
-                    value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))} />
-                </div>
+
+              {/* Table header */}
+              <div style={{ display:"grid", gridTemplateColumns:"90px 1fr 110px 120px 80px", padding:"8px 16px", borderBottom:"1px solid #1C1C24", flexShrink:0 }}>
+                {["ID","TITLE","STATUS","ASSIGNED","OPENED"].map(h => (
+                  <span key={h} style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9, color:"#3A3A48", letterSpacing:"0.1em" }}>{h}</span>
+                ))}
               </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button onClick={() => setShowForm(false)} className="btn">CANCEL</button>
-                <button data-testid="submit-ticket-btn" onClick={submit} className="btn btn-primary">
-                  {editId ? "UPDATE" : "CREATE"}
-                </button>
+
+              {/* Rows */}
+              <div className="flex-1 overflow-auto">
+                {shown.length === 0 && !loading && (
+                  <div style={{ padding:24, textAlign:"center", fontFamily:"'JetBrains Mono',monospace", fontSize:11, color:"#3A3A48" }}>
+                    NO ACTIVE TICKETS
+                  </div>
+                )}
+                {shown.map(t => {
+                  const pColor = PRIORITY_COLOR[t.priority] || "#3A3A48";
+                  const isSel  = selected?.id === t.id;
+                  return (
+                    <div key={t.id}
+                      data-testid={`ticket-row-${t.id}`}
+                      onClick={() => setSelected(isSel ? null : t)}
+                      style={{
+                        display:"grid", gridTemplateColumns:"90px 1fr 110px 120px 80px",
+                        padding:"9px 16px", cursor:"pointer", alignItems:"center",
+                        borderLeft: isSel ? `2px solid ${pColor}` : "2px solid transparent",
+                        background: isSel ? `${pColor}0A` : "transparent",
+                        borderBottom:"1px solid rgba(28,28,36,0.5)",
+                      }}>
+
+                      {/* ID + priority dot */}
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{ width:6, height:6, borderRadius:0, background:pColor, display:"inline-block", flexShrink:0, transform:"rotate(45deg)" }} />
+                        <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10, color:"#7A7A8A" }}>{t.display_id}</span>
+                      </div>
+
+                      {/* Title */}
+                      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10.5, color:"#C0C0CC", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", paddingRight:8 }}>
+                        {t.title}
+                      </span>
+
+                      {/* Status badge */}
+                      <span className={`badge ${STATUS_BADGE_CLS[t.status] || "badge-zinc"}`} style={{ fontSize:8.5, padding:"2px 6px", width:"fit-content" }}>
+                        {t.status.toUpperCase()}
+                      </span>
+
+                      {/* Assigned */}
+                      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color:"#3A3A48", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {t.assigned_to || t.group || "—"}
+                      </span>
+
+                      {/* Opened */}
+                      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color:"#3A3A48" }}>
+                        {timeAgo(t.opened)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
+
+            {/* Detail panel */}
+            {selected && (
+              <div className="card" style={{ width:320, flexShrink:0, overflow:"auto" }}>
+                <div className="card-header">
+                  <span>{selected.display_id}</span>
+                  <span className={`badge ${STATUS_BADGE_CLS[selected.status] || "badge-zinc"}`}>
+                    {selected.status.toUpperCase()}
+                  </span>
+                </div>
+
+                <div style={{ padding:"14px 16px" }}>
+                  <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:12, color:"#E2E2E5", lineHeight:1.5, marginBottom:16 }}>
+                    {selected.title}
+                  </div>
+
+                  {[
+                    ["TYPE",     selected.type],
+                    ["PRIORITY", selected.priority_raw],
+                    ["ASSIGNED", selected.assigned_to || "—"],
+                    ["GROUP",    selected.group       || "—"],
+                    ["CATEGORY", selected.category    || "—"],
+                    ["OPENED",   selected.opened ? new Date(selected.opened).toLocaleString() : "—"],
+                    ["UPDATED",  selected.updated ? timeAgo(selected.updated) : "—"],
+                  ].map(([k, v]) => (
+                    <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:"1px solid rgba(28,28,36,0.8)", gap:8 }}>
+                      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color:"#3A3A48", flexShrink:0 }}>{k}</span>
+                      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:9.5, color: k === "PRIORITY" ? (PRIORITY_COLOR[selected.priority] || "#9090A0") : "#9090A0", textAlign:"right" }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+        </>
       )}
     </div>
   );

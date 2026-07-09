@@ -27,8 +27,8 @@ const SITES = {
   "Canton":           { coords: [-81.378, 40.799] },
   "Canton Warehouse": { coords: [-81.220, 41.020] }, // offset NW for readability
   "Middlebury":       { coords: [-85.960, 41.630] }, // offset slightly west to separate from Constantine
-  // Azure Cloud — far east in Lake Huron, representing cloud connectivity
-  "Azure":            { coords: [-79.4,   44.5  ] },
+  // Azure Cloud — just off the northeast Michigan coast in Lake Huron
+  "Azure":            { coords: [-82.2,   44.9  ] },
 };
 
 const STATUS_COLOR = {
@@ -150,24 +150,53 @@ export default function NetworkMap() {
               }
             </Geographies>
 
-            {/* Tunnel lines */}
+            {/* ── Keyframe for flowing packet animation ── */}
+            <defs>
+              <style>{`
+                @keyframes packet-flow {
+                  from { stroke-dashoffset: 0; }
+                  to   { stroke-dashoffset: -24; }
+                }
+              `}</style>
+            </defs>
+
+            {/* Tunnel lines — two layers: base wire + flowing packets */}
             {links.map((link, i) => {
               const src = SITES[link.src]?.coords;
               const dst = SITES[link.dst]?.coords;
               if (!src || !dst) return null;
-              const color   = STATUS_COLOR[link.status] || "#3A3A48";
-              const opacity = link.status === "up" ? 0.22 : 0.65;
-              const width   = link.status === "down" ? 1.5 : link.status === "degraded" ? 1.2 : 0.8;
+              const color     = STATUS_COLOR[link.status] || "#3A3A48";
+              const isDown    = link.status === "down";
+              const isDegraded= link.status === "degraded";
+              // Stagger speed slightly per tunnel so they don't all pulse in sync
+              const duration  = 1.6 + (i % 9) * 0.18;
+              const delay     = (i % 7) * 0.22;
               return (
-                <Line
-                  key={i}
-                  from={src}
-                  to={dst}
-                  stroke={color}
-                  strokeWidth={width}
-                  strokeOpacity={opacity}
-                  strokeLinecap="round"
-                />
+                <g key={i}>
+                  {/* Base wire — always visible */}
+                  <Line
+                    from={src} to={dst}
+                    stroke={color}
+                    strokeWidth={isDown ? 1.2 : 0.6}
+                    strokeOpacity={isDown ? 0.55 : isDegraded ? 0.30 : 0.12}
+                    strokeLinecap="round"
+                  />
+                  {/* Flowing dashes — packets in transit (hidden when down) */}
+                  {!isDown && (
+                    <Line
+                      from={src} to={dst}
+                      stroke={color}
+                      strokeWidth={isDegraded ? 1.4 : 1.0}
+                      strokeOpacity={isDegraded ? 0.60 : 0.42}
+                      strokeDasharray="4 20"
+                      strokeLinecap="round"
+                      style={{
+                        animation: `packet-flow ${duration}s linear infinite`,
+                        animationDelay: `${delay}s`,
+                      }}
+                    />
+                  )}
+                </g>
               );
             })}
 

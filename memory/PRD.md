@@ -87,7 +87,9 @@ Create a dashboard in Python/React to display important information for IT at a 
 - [x] Cyberpunk NOC UI redesign
 - [x] Kiosk auto-rotation mode
 - [x] Aruba SD-WAN backend integration
-- [x] Geographic mesh map (proper state outlines)
+- [x] Geographic mesh map (proper state outlines, react-simple-maps)
+- [x] Animated flowing tunnel lines (packet effect) on the mesh map
+- [x] Vivantio ticketing live integration (SelectList scan strategy, 63 active tickets)
 
 ### P1 — Next Sprint
 - [ ] Migrate settings from MongoDB to flat `settings.yml` file
