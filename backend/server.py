@@ -1201,8 +1201,22 @@ async def clear_unifi_events():
     return {"deleted": result.deleted_count}
 
 @api_router.get("/unifi/devices")
-async def get_unifi_devices_endpoint():
+async def get_unifi_devices_endpoint(demo: bool = False):
     """Return all UniFi devices from both configured controllers (cache-first)."""
+    if demo:
+        return {"devices": [
+            {"id":"sw01","name":"SW-CORE-01","model":"USW-Pro-24-POE","type":"switch","type_raw":"usw","status":"online","ip":"10.202.1.1","mac":"aa:bb:cc:01","uptime":2592000,"uptime_str":"30d 0h","version":"6.5.59","controller":"Mimilk","num_sta":0,"num_port":24},
+            {"id":"sw02","name":"SW-DIST-02","model":"USW-48-POE","type":"switch","type_raw":"usw","status":"online","ip":"10.202.1.2","mac":"aa:bb:cc:02","uptime":1296000,"uptime_str":"15d 0h","version":"6.5.59","controller":"Mimilk","num_sta":0,"num_port":48},
+            {"id":"sw03","name":"SW-IDF-PLANT","model":"USW-24","type":"switch","type_raw":"usw","status":"offline","ip":"10.202.1.3","mac":"aa:bb:cc:03","uptime":0,"uptime_str":"","version":"6.5.59","controller":"Mimilk","num_sta":0,"num_port":24},
+            {"id":"ap01","name":"AP-LOBBY","model":"U6-Pro","type":"access_point","type_raw":"uap","status":"online","ip":"10.202.2.1","mac":"dd:ee:ff:01","uptime":864000,"uptime_str":"10d 0h","version":"6.2.49","controller":"Mimilk","num_sta":14,"num_port":0},
+            {"id":"ap02","name":"AP-OFFICE","model":"U6-LR","type":"access_point","type_raw":"uap","status":"online","ip":"10.202.2.2","mac":"dd:ee:ff:02","uptime":432000,"uptime_str":"5d 0h","version":"6.2.49","controller":"Mimilk","num_sta":8,"num_port":0},
+            {"id":"ap03","name":"AP-WAREHOUSE","model":"U6-Mesh","type":"access_point","type_raw":"uap","status":"online","ip":"10.202.2.3","mac":"dd:ee:ff:03","uptime":259200,"uptime_str":"3d 0h","version":"6.2.49","controller":"Mimilk","num_sta":3,"num_port":0},
+            {"id":"ap04","name":"AP-CONF-ROOM","model":"U6-Pro","type":"access_point","type_raw":"uap","status":"offline","ip":"10.202.2.4","mac":"dd:ee:ff:04","uptime":0,"uptime_str":"","version":"6.2.49","controller":"Mimilk","num_sta":0,"num_port":0},
+            {"id":"cam01","name":"CAM-ENTRY","model":"G4-Dome","type":"camera","type_raw":"uvc","status":"online","ip":"10.202.3.1","mac":"cc:00:11:01","uptime":604800,"uptime_str":"7d 0h","version":"4.69.55","controller":"CloudKey","num_sta":0,"num_port":0},
+            {"id":"cam02","name":"CAM-PARKING","model":"G4-Bullet","type":"camera","type_raw":"uvc","status":"online","ip":"10.202.3.2","mac":"cc:00:11:02","uptime":604800,"uptime_str":"7d 0h","version":"4.69.55","controller":"CloudKey","num_sta":0,"num_port":0},
+            {"id":"cam03","name":"CAM-SERVER-ROOM","model":"G3-Instant","type":"camera","type_raw":"uvc","status":"offline","ip":"10.202.3.3","mac":"cc:00:11:03","uptime":0,"uptime_str":"","version":"4.69.55","controller":"CloudKey","num_sta":0,"num_port":0},
+        ], "updated": datetime.now(timezone.utc).isoformat()}
+
     if "devices" in _unifi_cache:
         return {"devices": _unifi_cache["devices"], "updated": _unifi_cache.get("updated")}
 
