@@ -483,7 +483,13 @@ async def check_vendor_status(vendor: dict, dd_token: Optional[str] = None) -> d
         return await _dd_check_status(vendor, dd_token)
 
     # Fallback: poll vendor's own public Statuspage.io / status page
-    result = {"id": vendor["id"], "name": vendor["name"], "status": "unknown", "description": "Status unavailable", "last_checked": datetime.now(timezone.utc).isoformat(), "web_url": vendor["web_url"], "incidents": []}
+    result = {
+        "id": vendor["id"], "name": vendor["name"],
+        "category": vendor.get("category", "Other"),
+        "status": "unknown", "description": "Status unavailable",
+        "last_checked": datetime.now(timezone.utc).isoformat(),
+        "web_url": vendor["web_url"], "incidents": []
+    }
     if not vendor.get("status_url"):
         result["description"] = "No public status page configured"
         return result

@@ -8,9 +8,10 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        rajdhani: ["Rajdhani", "sans-serif"],
-        chivo: ["Chivo", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"],
+        sans:    ["JetBrains Mono", "monospace"],
+        mono:    ["JetBrains Mono", "monospace"],
+        rajdhani: ["JetBrains Mono", "monospace"],
+        chivo:   ["JetBrains Mono", "monospace"],
       },
       borderRadius: {
         lg: 'var(--radius)',

@@ -140,9 +140,9 @@ export default function NetworkMap() {
                       <Geography
                         key={geo.rsmKey}
                         geography={geo}
-                        fill={isPrimary ? "#0A0F0A" : "#070708"}
-                        stroke={isPrimary ? "#183318" : "#111115"}
-                        strokeWidth={isPrimary ? 1.2 : 0.6}
+                        fill={isPrimary ? "#0A1A0A" : "#13131F"}
+                        stroke={isPrimary ? "#1A3A1A" : "#2C2C40"}
+                        strokeWidth={isPrimary ? 1.2 : 0.9}
                         style={{ default:{ outline:"none" }, hover:{ outline:"none" }, pressed:{ outline:"none" } }}
                       />
                     );

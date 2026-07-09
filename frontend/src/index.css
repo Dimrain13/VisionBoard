@@ -6,10 +6,14 @@
 
 * { box-sizing: border-box; }
 
+/* Force JetBrains Mono everywhere — overrides Tailwind preflight and form element resets */
+html, body, * {
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
 body {
   background-color: #030305;
   color: #E2E2E5;
-  font-family: 'JetBrains Mono', monospace;
   margin: 0;
   overflow: hidden;
 }
