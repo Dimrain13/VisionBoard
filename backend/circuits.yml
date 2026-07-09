@@ -1,0 +1,73 @@
+circuits:
+- site: Remus
+  provider: AT&T
+  circuit_id: ATT-MR-4521
+  bandwidth_mbps: 100
+  ip_address: 203.0.113.1
+  status: down
+  notes: Circuit reported down by WUG
+  id: 2f10da7f-651f-4c71-9e6e-22e8626e7f23
+  created_at: '2026-07-09T17:25:20.851148+00:00'
+- site: Ovid
+  provider: Comcast Business
+  circuit_id: CMCST-OV-8832
+  bandwidth_mbps: 100
+  ip_address: 198.51.100.2
+  status: up
+  notes: ''
+  id: fd165419-80ab-42ed-a5e6-a9e20fec2fab
+  created_at: '2026-07-09T17:25:20.851156+00:00'
+- site: Mt. Pleasant
+  provider: AT&T
+  circuit_id: ATT-MTP-9912
+  bandwidth_mbps: 200
+  ip_address: 203.0.113.10
+  status: up
+  notes: ''
+  id: ec6bfb44-9dc9-487f-a873-b25c476fb899
+  created_at: '2026-07-09T17:25:20.851161+00:00'
+- site: Constantine
+  provider: Spectrum Business
+  circuit_id: SPEC-CN-1145
+  bandwidth_mbps: 50
+  ip_address: 192.0.2.5
+  status: degraded
+  notes: Intermittent packet loss reported
+  id: 42acdc5e-0c5c-42f4-b104-3eefa2882fd4
+  created_at: '2026-07-09T17:25:20.851165+00:00'
+- site: Novi
+  provider: AT&T
+  circuit_id: ATT-NV-0034
+  bandwidth_mbps: 1000
+  ip_address: 203.0.113.20
+  status: up
+  notes: Primary HQ - 1Gbps dedicated fiber
+  id: 8379378e-3f68-4e36-9a2e-1005ced2c936
+  created_at: '2026-07-09T17:25:20.851169+00:00'
+- site: Canton Plant
+  provider: Spectrum Business
+  circuit_id: SPEC-CP-7721
+  bandwidth_mbps: 200
+  ip_address: 192.0.2.30
+  status: up
+  notes: ''
+  id: 592bcf09-d2e1-4a41-9013-1e8f47c65560
+  created_at: '2026-07-09T17:25:20.851172+00:00'
+- site: Canton Warehouse
+  provider: Comcast Business
+  circuit_id: CMCST-CW-5543
+  bandwidth_mbps: 100
+  ip_address: 198.51.100.40
+  status: up
+  notes: ''
+  id: 402556a7-d8e0-42f6-a974-a6ac6fd16628
+  created_at: '2026-07-09T17:25:20.851176+00:00'
+- site: Middlebury
+  provider: AT&T
+  circuit_id: ATT-MB-2267
+  bandwidth_mbps: 100
+  ip_address: 203.0.113.50
+  status: up
+  notes: ''
+  id: 99234f37-a0f7-4c86-9b78-ab1c7ee5c308
+  created_at: '2026-07-09T17:25:20.851185+00:00'

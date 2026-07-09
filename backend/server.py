@@ -1,12 +1,12 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 import os, logging, asyncio, httpx, imaplib, email as emaillib, re, uuid, base64, time
+import yaml, threading
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent
@@ -15,8 +15,77 @@ load_dotenv(ROOT_DIR / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-mongo_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = mongo_client[os.environ["DB_NAME"]]
+# ─── YAML File Helpers ────────────────────────────────────────────
+SETTINGS_FILE = ROOT_DIR / "settings.yml"
+CIRCUITS_FILE  = ROOT_DIR / "circuits.yml"
+_settings_lock = threading.Lock()
+_circuits_lock  = threading.Lock()
+
+DEFAULT_SETTINGS: dict = {
+    "refresh_interval": 30, "kiosk_enabled": False, "kiosk_interval": 30,
+    "email_enabled": False, "email_host": "", "email_port": 993,
+    "email_username": "", "email_password": "", "email_folder": "INBOX",
+    "wug_sender_filter": "whatsupgold",
+    "vivantio_api_url": "", "vivantio_api_key": "", "vivantio_password": "",
+    "aruba_api_url": "", "aruba_api_key": "",
+    "wazuh_enabled": False, "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000,
+    "wazuh_indexer_port": 9200, "wazuh_username": "", "wazuh_password": "",
+    "wazuh_indexer_username": "", "wazuh_indexer_password": "",
+    "downdetector_client_id": "", "downdetector_client_secret": "",
+    "unifi_syslog_port": 5140, "unifi_syslog_enabled": True,
+    "unifi_controller1_url": "", "unifi_controller1_username": "",
+    "unifi_controller1_password": "", "unifi_controller1_site": "default",
+    "unifi_controller1_label": "Site 1",
+    "unifi_controller2_url": "", "unifi_controller2_username": "",
+    "unifi_controller2_password": "", "unifi_controller2_site": "default",
+    "unifi_controller2_label": "Site 2",
+}
+
+def load_settings() -> dict:
+    """Load settings.yml, creating it with defaults if it doesn't exist."""
+    with _settings_lock:
+        if not SETTINGS_FILE.exists():
+            _write_settings(DEFAULT_SETTINGS.copy())
+            return DEFAULT_SETTINGS.copy()
+        with open(SETTINGS_FILE, "r") as f:
+            data = yaml.safe_load(f) or {}
+        return {**DEFAULT_SETTINGS, **data}
+
+def _write_settings(data: dict):
+    with open(SETTINGS_FILE, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+def save_settings(update: dict) -> dict:
+    """Merge update into existing settings.yml and return the new full dict."""
+    with _settings_lock:
+        current = load_settings()
+        current.update({k: v for k, v in update.items() if v is not None})
+        _write_settings(current)
+        return current
+
+
+def load_circuits() -> list:
+    """Load circuits.yml, returning an empty list if it doesn't exist."""
+    with _circuits_lock:
+        if not CIRCUITS_FILE.exists():
+            return []
+        with open(CIRCUITS_FILE, "r") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("circuits", [])
+
+def save_circuits(circuits: list):
+    """Write full circuits list to circuits.yml."""
+    with _circuits_lock:
+        with open(CIRCUITS_FILE, "w") as f:
+            yaml.dump({"circuits": circuits}, f, default_flow_style=False,
+                      allow_unicode=True, sort_keys=False)
+
+
+# ─── In-memory stores (reset on restart — seeded at startup) ──────
+_alerts_store: list = []
+_tickets_store: list = []
+_unifi_events_store: list = []  # ring buffer, max 500
+
 
 # ─── Models ───────────────────────────────────────────────────────
 class AlertCreate(BaseModel):
@@ -56,8 +125,8 @@ class SettingsUpdate(BaseModel):
     email_folder: Optional[str] = None
     wug_sender_filter: Optional[str] = None
     vivantio_api_url: Optional[str] = None
-    vivantio_api_key: Optional[str] = None   # username for Basic Auth
-    vivantio_password: Optional[str] = None  # password for Basic Auth
+    vivantio_api_key: Optional[str] = None
+    vivantio_password: Optional[str] = None
     aruba_api_url: Optional[str] = None
     aruba_api_key: Optional[str] = None
     unifi_syslog_port: Optional[int] = None
@@ -74,17 +143,17 @@ class SettingsUpdate(BaseModel):
     kiosk_interval: Optional[int] = None
     downdetector_client_id: Optional[str] = None
     downdetector_client_secret: Optional[str] = None
-    # UniFi Network Controller — up to two controllers
     unifi_controller1_url: Optional[str] = None
     unifi_controller1_username: Optional[str] = None
     unifi_controller1_password: Optional[str] = None
-    unifi_controller1_site: Optional[str] = None   # default: "default"
-    unifi_controller1_label: Optional[str] = None  # display name e.g. "Main Campus"
+    unifi_controller1_site: Optional[str] = None
+    unifi_controller1_label: Optional[str] = None
     unifi_controller2_url: Optional[str] = None
     unifi_controller2_username: Optional[str] = None
     unifi_controller2_password: Optional[str] = None
     unifi_controller2_site: Optional[str] = None
     unifi_controller2_label: Optional[str] = None
+
 
 # ─── UniFi Syslog ─────────────────────────────────────────────────
 def parse_unifi_syslog(raw: str) -> dict:
@@ -98,32 +167,16 @@ def parse_unifi_syslog(raw: str) -> dict:
         elif level == 4:
             severity = "warning"
 
-    lower = raw.lower()
-    if any(k in lower for k in ["emerg", "crit", "attack", "intrusion", "brute"]):
-        severity = "critical"
-    elif any(k in lower for k in ["error", "fail", "block", "deny", "reject", "drop", "deauth", "disconnect", "unreachable"]):
-        if severity == "info":
-            severity = "warning"
-
-    # Extract hostname from RFC3164: <PRI>Mon DD HH:MM:SS HOSTNAME …
-    device = None
-    clean = re.sub(r'^<\d+>', '', raw).strip()
-    parts = clean.split()
-    if len(parts) >= 4:
-        device = parts[3]
-
-    # Strip timestamp prefix to get message
-    msg_match = re.match(r'^\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+(.*)', clean)
-    message = msg_match.group(1) if msg_match else clean
-
-    return {"severity": severity, "device": device, "message": message[:1000]}
+    # Extract hostname/device from syslog header: <PRI>Mon DD HH:MM:SS hostname message
+    msg = re.sub(r'^<\d+>', '', raw).strip()
+    parts = msg.split()
+    device = parts[3] if len(parts) > 3 else None
+    message = " ".join(parts[4:]) if len(parts) > 4 else msg
+    return {"severity": severity, "device": device, "message": message[:500]}
 
 
 class UnifiSyslogProtocol(asyncio.DatagramProtocol):
     """UDP datagram receiver for UniFi syslog traffic."""
-
-    def __init__(self, db_ref):
-        self.db = db_ref
 
     def connection_made(self, transport):
         self.transport = transport
@@ -148,7 +201,9 @@ class UnifiSyslogProtocol(asyncio.DatagramProtocol):
             "message": parsed["message"],
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        await self.db.unifi_events.insert_one(doc)
+        _unifi_events_store.append(doc)
+        if len(_unifi_events_store) > 500:
+            _unifi_events_store.pop(0)
         logger.info(f"UniFi [{parsed['severity'].upper()}] {source_ip} – {parsed['message'][:60]}")
 
     def error_received(self, exc):
@@ -266,8 +321,7 @@ _dd_token_cache: dict = {"token": None, "expires_at": 0.0}
 _dd_company_id_cache: dict = {}  # vendor_id -> Downdetector company_id (cached per process)
 
 async def _dd_get_token(client_id: str, client_secret: str, force: bool = False) -> Optional[str]:
-    """Obtain (or return cached) Downdetector Bearer token. Expires in 1 h.
-    Pass force=True to always generate a fresh token regardless of cache."""
+    """Obtain (or return cached) Downdetector Bearer token. Expires in 1 h."""
     now = time.time()
     if not force and _dd_token_cache["token"] and now < _dd_token_cache["expires_at"] - 60:
         return _dd_token_cache["token"]
@@ -290,15 +344,13 @@ async def _dd_get_token(client_id: str, client_secret: str, force: bool = False)
     return None
 
 async def background_dd_token_refresher():
-    """Proactively generate a fresh Downdetector Bearer token every 45 minutes.
-    Runs independently of API calls so the token is always ready when vendor-status is polled.
-    Reads credentials from MongoDB each cycle — picks up Settings changes automatically."""
-    await asyncio.sleep(12)  # Let other startup tasks settle first
+    """Proactively generate a fresh Downdetector Bearer token every 45 minutes."""
+    await asyncio.sleep(12)
     while True:
         try:
-            settings  = await db.settings.find_one({"_id": "app_settings"})
-            dd_id     = (settings or {}).get("downdetector_client_id", "")
-            dd_secret = (settings or {}).get("downdetector_client_secret", "")
+            settings  = load_settings()
+            dd_id     = settings.get("downdetector_client_id", "")
+            dd_secret = settings.get("downdetector_client_secret", "")
             if dd_id and dd_secret:
                 token = await _dd_get_token(dd_id, dd_secret, force=True)
                 if token:
@@ -311,6 +363,66 @@ async def background_dd_token_refresher():
             logger.warning(f"Downdetector token refresher error: {e}")
         await asyncio.sleep(2700)  # 45 minutes
 
+
+async def _dd_get_company_id(vendor_id: str, slug: str, token: str) -> Optional[int]:
+    if vendor_id in _dd_company_id_cache:
+        return _dd_company_id_cache[vendor_id]
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(
+                f"https://downdetectorapi.com/v2/slugs/{slug}/companies",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if r.status_code == 200:
+                items = r.json()
+                if items:
+                    cid = items[0].get("id")
+                    _dd_company_id_cache[vendor_id] = cid
+                    return cid
+    except Exception:
+        pass
+    return None
+
+
+async def check_vendor_status(vendor: dict, dd_token: Optional[str]) -> dict:
+    vendor_id   = vendor["id"]
+    status      = "unknown"
+    source      = "none"
+
+    # 1. Try Downdetector Enterprise API
+    if dd_token and vendor.get("dd_slug"):
+        try:
+            company_id = await _dd_get_company_id(vendor_id, vendor["dd_slug"], dd_token)
+            if company_id:
+                async with httpx.AsyncClient(timeout=8) as c:
+                    r = await c.get(
+                        f"https://downdetectorapi.com/v2/companies/{company_id}/status/current",
+                        headers={"Authorization": f"Bearer {dd_token}"}
+                    )
+                    if r.status_code == 200:
+                        dd_status = r.json().get("status", "")
+                        status = {"success": "operational", "warning": "minor_outage", "danger": "major_outage"}.get(dd_status, "unknown")
+                        source = "downdetector"
+                        return {**vendor, "status": status, "source": source}
+        except Exception:
+            pass
+
+    # 2. Fall back to public statuspage.io
+    if vendor.get("status_url"):
+        try:
+            async with httpx.AsyncClient(timeout=6) as c:
+                r = await c.get(vendor["status_url"])
+                if r.status_code == 200:
+                    data = r.json()
+                    ind = data.get("status", {}).get("indicator", "unknown")
+                    status = {"none": "operational", "minor": "minor_outage", "major": "major_outage", "critical": "major_outage"}.get(ind, "unknown")
+                    source = "statuspage"
+        except Exception:
+            pass
+
+    return {**vendor, "status": status, "source": source}
+
+
 # ─── UniFi Network Controller ─────────────────────────────────────────────────
 
 UNIFI_TYPE_MAP = {
@@ -320,55 +432,48 @@ UNIFI_TYPE_MAP = {
 }
 
 def _fmt_uptime(seconds: int) -> str:
-    if seconds > 86400:
-        return f"{seconds // 86400}d {(seconds % 86400) // 3600}h"
-    if seconds > 3600:
-        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
-    if seconds > 0:
-        return f"{seconds // 60}m"
-    return ""
+    if not seconds:
+        return ""
+    d, rem = divmod(int(seconds), 86400)
+    h = rem // 3600
+    return f"{d}d {h}h" if d else f"{h}h"
 
 def _norm_unifi_device(d: dict, label: str) -> dict:
-    type_raw = d.get("type", "").lower()
+    type_raw = (d.get("type") or "").lower()
+    uptime   = d.get("uptime", 0) or 0
     return {
-        "id":          d.get("mac") or d.get("_id", ""),
-        "name":        d.get("name") or d.get("hostname", "Unknown"),
-        "model":       d.get("model", ""),
-        "type":        UNIFI_TYPE_MAP.get(type_raw, "device"),
-        "type_raw":    type_raw,
-        "status":      "online" if d.get("state", 0) == 1 else "offline",
-        "ip":          d.get("ip", ""),
-        "mac":         d.get("mac", ""),
-        "uptime":      d.get("uptime", 0),
-        "uptime_str":  _fmt_uptime(d.get("uptime", 0)),
-        "version":     d.get("version", ""),
-        "controller":  label,
-        "num_sta":     d.get("num_sta", 0),   # connected clients (APs)
-        "num_port":    d.get("num_port", 0),  # ports (switches)
+        "id":        d.get("_id", str(uuid.uuid4())),
+        "name":      d.get("name") or d.get("hostname") or "Unknown",
+        "model":     d.get("model", ""),
+        "type":      UNIFI_TYPE_MAP.get(type_raw, "device"),
+        "type_raw":  type_raw,
+        "status":    "online" if d.get("state") == 1 else "offline",
+        "ip":        d.get("ip", ""),
+        "mac":       d.get("mac", ""),
+        "uptime":    uptime,
+        "uptime_str": _fmt_uptime(uptime),
+        "version":   d.get("version", ""),
+        "controller": label,
+        "num_sta":   d.get("num_sta", 0),
+        "num_port":  d.get("num_port", 0),
     }
 
 async def _fetch_unifi_controller(url: str, username: str, password: str, site: str, label: str) -> list:
     """Fetch all devices from one UniFi Network controller.
     Auto-detects UniFi OS (UDM/UXG) vs legacy (CloudKey/USG) API path."""
-    if not url or not username:
-        return []
-    # Normalize: strip trailing slash
-    url = url.rstrip("/")
     try:
-        async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as client:
-            creds = {"username": username, "password": password}
+        async with httpx.AsyncClient(verify=False, timeout=10) as c:
             # 1. Try UniFi OS (Dream Machine, UXG, etc.) — /api/auth/login
-            r = await client.post(f"{url}/api/auth/login", json=creds)
-            if r.status_code in (200, 204):
-                dr = await client.get(f"{url}/proxy/network/api/s/{site}/stat/device")
+            r1 = await c.post(f"{url}/api/auth/login", json={"username": username, "password": password})
+            if r1.status_code in (200, 201):
+                dr = await c.get(f"{url}/proxy/network/api/s/{site}/stat/device")
             else:
-                # 2. Legacy controller (CloudKey Gen1/Gen2, USG)
-                r2 = await client.post(f"{url}/api/login", json=creds)
-                if r2.status_code != 200:
+                # 2. Fall back to legacy — /api/login
+                r2 = await c.post(f"{url}/api/login", json={"username": username, "password": password})
+                if r2.status_code not in (200, 201):
                     logger.warning(f"UniFi login failed for {url}: {r2.status_code}")
                     return []
-                dr = await client.get(f"{url}/api/s/{site}/stat/device")
-
+                dr = await c.get(f"{url}/api/s/{site}/stat/device")
             if dr.status_code != 200:
                 logger.warning(f"UniFi devices HTTP {dr.status_code} from {url}")
                 return []
@@ -381,10 +486,10 @@ _unifi_cache: dict = {}
 
 async def background_unifi_warmer():
     """Refresh UniFi device list from both controllers every 60 s."""
-    await asyncio.sleep(20)
+    await asyncio.sleep(15)
     while True:
         try:
-            s = (await db.settings.find_one({"_id": "app_settings"})) or {}
+            s = load_settings()
             tasks = []
             if s.get("unifi_controller1_url") and s.get("unifi_controller1_username"):
                 tasks.append(_fetch_unifi_controller(
@@ -410,226 +515,68 @@ async def background_unifi_warmer():
             logger.warning(f"UniFi warmer error: {e}")
         await asyncio.sleep(60)
 
-async def _dd_get_company_id(token: str, vendor_id: str, dd_slug: str) -> Optional[int]:
-    """Resolve a Downdetector company_id from a known URL slug.
-    Uses /slugs/{slug}/companies — more reliable than a text search."""
-    if vendor_id in _dd_company_id_cache:
-        return _dd_company_id_cache[vendor_id]
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"https://downdetectorapi.com/v2/slugs/{dd_slug}/companies",
-                headers={"Authorization": f"Bearer {token}"}
-            )
-            if r.status_code == 200:
-                data = r.json()
-                items = data if isinstance(data, list) else (data.get("companies") or [])
-                if items:
-                    company_id = items[0].get("id")
-                    if company_id:
-                        _dd_company_id_cache[vendor_id] = company_id
-                        logger.info(f"Downdetector: {vendor_id} (slug={dd_slug}) -> company_id={company_id}")
-                        return company_id
-                logger.warning(f"Downdetector: slug={dd_slug} returned no companies")
-            else:
-                logger.warning(f"Downdetector slug lookup HTTP {r.status_code} for slug={dd_slug}")
-    except Exception as e:
-        logger.warning(f"Downdetector slug lookup error for {vendor_id} ({dd_slug}): {e}")
-    return None
-
-async def _dd_check_status(vendor: dict, token: str) -> dict:
-    """Check a single vendor's status via the Downdetector API."""
-    result = {
-        "id": vendor["id"], "name": vendor["name"],
-        "category": vendor.get("category", "Other"),
-        "status": "unknown", "description": "Checking via Downdetector…",
-        "last_checked": datetime.now(timezone.utc).isoformat(),
-        "web_url": vendor["web_url"], "incidents": [], "source": "downdetector"
-    }
-    company_id = await _dd_get_company_id(token, vendor["id"], vendor.get("dd_slug", vendor["id"]))
-    if not company_id:
-        result["description"] = "Not found on Downdetector"
-        return result
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"https://downdetectorapi.com/v2/companies/{company_id}/status",
-                headers={"Authorization": f"Bearer {token}"}
-            )
-            if r.status_code == 200:
-                data = r.json()
-                dd_status = data.get("status", "unknown")
-                DD_STATUS_MAP = {"success": "operational", "warning": "minor_outage", "danger": "major_outage"}
-                result["status"] = DD_STATUS_MAP.get(dd_status, "unknown")
-                # Try to surface a useful description from report counts
-                baseline = data.get("baseline_current") or {}
-                reports  = baseline.get("reports_value", 0) if isinstance(baseline, dict) else 0
-                if result["status"] == "operational":
-                    result["description"] = "No problems detected"
-                elif reports:
-                    result["description"] = f"{reports} user reports in the last hour"
-                else:
-                    result["description"] = "Issues reported by users"
-            else:
-                result["description"] = f"Downdetector returned HTTP {r.status_code}"
-    except Exception as e:
-        logger.warning(f"Downdetector status error for {vendor['name']}: {e}")
-        result["description"] = "Could not reach Downdetector"
-    return result
-
-async def check_vendor_status(vendor: dict, dd_token: Optional[str] = None) -> dict:
-    """Check vendor status — uses Downdetector if token available, else falls back to public status pages."""
-    if dd_token:
-        return await _dd_check_status(vendor, dd_token)
-
-    # Fallback: poll vendor's own public Statuspage.io / status page
-    result = {
-        "id": vendor["id"], "name": vendor["name"],
-        "category": vendor.get("category", "Other"),
-        "status": "unknown", "description": "Status unavailable",
-        "last_checked": datetime.now(timezone.utc).isoformat(),
-        "web_url": vendor["web_url"], "incidents": []
-    }
-    if not vendor.get("status_url"):
-        result["description"] = "No public status page configured"
-        return result
-    try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-            resp = await client.get(vendor["status_url"])
-            if resp.status_code == 200:
-                data = resp.json()
-                indicator = data.get("status", {}).get("indicator", "none")
-                description = data.get("status", {}).get("description", "All Systems Operational")
-                status_map = {"none": "operational", "minor": "minor_outage", "major": "major_outage", "critical": "major_outage", "maintenance": "maintenance"}
-                result["status"] = status_map.get(indicator, "unknown")
-                result["description"] = description
-                incidents = data.get("incidents", [])
-                result["incidents"] = [{"name": i.get("name", ""), "status": i.get("status", "")} for i in incidents[:3]]
-    except Exception as e:
-        logger.warning(f"Could not check {vendor['name']}: {e}")
-        result["description"] = "Could not reach status page"
-    return result
-
-# ─── Email Parser ─────────────────────────────────────────────────
-def parse_wug_email(subject: str, body: str) -> dict:
-    severity = "info"
-    if re.search(r"(critical|down|error|fail|unreachable)", subject.lower()):
-        severity = "critical"
-    elif re.search(r"(warning|warn|high|degraded|slow)", subject.lower()):
-        severity = "warning"
-    device_match = re.search(r"(?:device|host)[:\s]+([^\n\r,]+)", body, re.I)
-    site_match = re.search(r"(?:site|location)[:\s]+([^\n\r,]+)", body, re.I)
-    return {
-        "title": subject[:200],
-        "message": body[:1000],
-        "severity": severity,
-        "source": "wug",
-        "device": device_match.group(1).strip() if device_match else None,
-        "site": site_match.group(1).strip() if site_match else None,
-    }
 
 # ─── Seed Data ────────────────────────────────────────────────────
-async def seed_demo_data():
+def seed_demo_data():
+    """Seed in-memory stores with demo data on startup."""
     now = datetime.now(timezone.utc)
 
-    if await db.alerts.count_documents({}) == 0:
-        alerts = [
-            {"id": str(uuid.uuid4()), "title": "WAN Circuit Down - Remus Site", "message": "DIA circuit at Remus is unresponsive. Provider AT&T. Circuit ID: ATT-MR-4521. Ping response lost.", "severity": "critical", "source": "wug", "site": "Remus", "device": "REMUS-WAN-RTR", "acknowledged": False, "acknowledged_by": None, "acknowledged_at": None, "created_at": (now - timedelta(minutes=15)).isoformat()},
-            {"id": str(uuid.uuid4()), "title": "High CPU Alert - Constantine Core Switch", "message": "CPU utilization at 94% for 10+ minutes. Possible traffic storm or runaway process. Device: CONST-CORE-SW01", "severity": "warning", "source": "wug", "site": "Constantine", "device": "CONST-CORE-SW01", "acknowledged": False, "acknowledged_by": None, "acknowledged_at": None, "created_at": (now - timedelta(hours=1)).isoformat()},
-            {"id": str(uuid.uuid4()), "title": "UPS Battery Critical - Canton Plant", "message": "UPS battery at 12% charge. Estimated runtime 8 minutes. Immediate attention required.", "severity": "critical", "source": "wug", "site": "Canton Plant", "device": "CANTON-P-UPS01", "acknowledged": True, "acknowledged_by": "admin", "acknowledged_at": (now - timedelta(hours=1, minutes=30)).isoformat(), "created_at": (now - timedelta(hours=2)).isoformat()},
-            {"id": str(uuid.uuid4()), "title": "Disk Space Warning - Novi File Server", "message": "Drive D: at 87% capacity. 134GB free of 1TB. Server: NOVI-FS01", "severity": "warning", "source": "wug", "site": "Novi", "device": "NOVI-FS01", "acknowledged": False, "acknowledged_by": None, "acknowledged_at": None, "created_at": (now - timedelta(hours=3)).isoformat()},
-            {"id": str(uuid.uuid4()), "title": "Backup Completed - Nightly Cycle", "message": "Nightly backup completed successfully on NOVI-BACKUP01. Duration: 2h 14m. Total: 842GB.", "severity": "info", "source": "manual", "site": "Novi", "device": "NOVI-BACKUP01", "acknowledged": False, "acknowledged_by": None, "acknowledged_at": None, "created_at": (now - timedelta(hours=5)).isoformat()},
-        ]
-        await db.alerts.insert_many(alerts)
+    # Alerts are NOT pre-seeded — they come from WUG email polling, Wazuh, or manual entry.
+    # This avoids showing phantom/stale alerts on the NOC wall display.
 
-    if await db.circuits.count_documents({}) == 0:
+    if not _tickets_store:
         ts = now.isoformat()
-        circuits = [
-            {"id": str(uuid.uuid4()), "site": "Remus", "provider": "AT&T", "circuit_id": "ATT-MR-4521", "bandwidth_mbps": 100, "ip_address": "203.0.113.1", "status": "down", "notes": "Circuit reported down by WUG", "last_checked": ts, "created_at": ts},
-            {"id": str(uuid.uuid4()), "site": "Ovid", "provider": "Comcast Business", "circuit_id": "CMCST-OV-8832", "bandwidth_mbps": 100, "ip_address": "198.51.100.2", "status": "up", "notes": "", "last_checked": ts, "created_at": ts},
-            {"id": str(uuid.uuid4()), "site": "Mt. Pleasant", "provider": "AT&T", "circuit_id": "ATT-MTP-9912", "bandwidth_mbps": 200, "ip_address": "203.0.113.10", "status": "up", "notes": "", "last_checked": ts, "created_at": ts},
-            {"id": str(uuid.uuid4()), "site": "Constantine", "provider": "Spectrum Business", "circuit_id": "SPEC-CN-1145", "bandwidth_mbps": 50, "ip_address": "192.0.2.5", "status": "degraded", "notes": "Intermittent packet loss reported", "last_checked": ts, "created_at": ts},
-            {"id": str(uuid.uuid4()), "site": "Novi", "provider": "AT&T", "circuit_id": "ATT-NV-0034", "bandwidth_mbps": 1000, "ip_address": "203.0.113.20", "status": "up", "notes": "Primary HQ - 1Gbps dedicated fiber", "last_checked": ts, "created_at": ts},
-            {"id": str(uuid.uuid4()), "site": "Canton Plant", "provider": "Spectrum Business", "circuit_id": "SPEC-CP-7721", "bandwidth_mbps": 200, "ip_address": "192.0.2.30", "status": "up", "notes": "", "last_checked": ts, "created_at": ts},
-            {"id": str(uuid.uuid4()), "site": "Canton Warehouse", "provider": "Comcast Business", "circuit_id": "CMCST-CW-5543", "bandwidth_mbps": 100, "ip_address": "198.51.100.40", "status": "up", "notes": "", "last_checked": ts, "created_at": ts},
-            {"id": str(uuid.uuid4()), "site": "Middlebury", "provider": "AT&T", "circuit_id": "ATT-MB-2267", "bandwidth_mbps": 100, "ip_address": "203.0.113.50", "status": "up", "notes": "", "last_checked": ts, "created_at": ts},
-        ]
-        await db.circuits.insert_many(circuits)
-
-    if await db.tickets.count_documents({}) == 0:
-        ts = now.isoformat()
-        tickets = [
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1041", "title": "Replace failing HDD on REMUS-FS01", "description": "SMART errors detected. Users reporting slow file access. Schedule replacement and data migration.", "priority": "high", "status": "open", "category": "Hardware", "assigned_to": "John D.", "site": "Remus", "source": "manual", "created_at": (now - timedelta(days=1)).isoformat(), "updated_at": ts},
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1042", "title": "Investigate packet loss at Constantine", "description": "Users reporting intermittent connectivity. Packet loss detected on WAN circuit.", "priority": "critical", "status": "in_progress", "category": "Network", "assigned_to": "Sarah M.", "site": "Constantine", "source": "manual", "created_at": (now - timedelta(hours=6)).isoformat(), "updated_at": ts},
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1043", "title": "Setup workstations - 3 new hires Novi", "description": "3 new workstations for IT dept expansion. Image with standard build and deploy.", "priority": "medium", "status": "in_progress", "category": "Hardware", "assigned_to": "Mike R.", "site": "Novi", "source": "manual", "created_at": (now - timedelta(days=2)).isoformat(), "updated_at": ts},
+        _tickets_store.extend([
+            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1041", "title": "Replace failing HDD on REMUS-FS01", "description": "SMART errors detected. Users reporting slow file access.", "priority": "high", "status": "open", "category": "Hardware", "assigned_to": "John D.", "site": "Remus", "source": "manual", "created_at": (now - timedelta(days=1)).isoformat(), "updated_at": ts},
+            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1042", "title": "Investigate packet loss at Constantine", "description": "Users reporting intermittent connectivity. Packet loss on WAN circuit.", "priority": "critical", "status": "in_progress", "category": "Network", "assigned_to": "Sarah M.", "site": "Constantine", "source": "manual", "created_at": (now - timedelta(hours=6)).isoformat(), "updated_at": ts},
+            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1043", "title": "Setup workstations - 3 new hires Novi", "description": "3 new workstations for IT dept expansion.", "priority": "medium", "status": "in_progress", "category": "Hardware", "assigned_to": "Mike R.", "site": "Novi", "source": "manual", "created_at": (now - timedelta(days=2)).isoformat(), "updated_at": ts},
             {"id": str(uuid.uuid4()), "ticket_number": "TKT-1044", "title": "SSL Certificate renewal - internal portal", "description": "Certificate expires in 15 days. Renew and deploy to web servers.", "priority": "medium", "status": "open", "category": "Security", "assigned_to": None, "site": None, "source": "manual", "created_at": (now - timedelta(days=3)).isoformat(), "updated_at": ts},
             {"id": str(uuid.uuid4()), "ticket_number": "TKT-1045", "title": "Printer setup - Canton Warehouse", "description": "New HP LaserJet Pro needs to be added to network print server.", "priority": "low", "status": "open", "category": "Hardware", "assigned_to": None, "site": "Canton Warehouse", "source": "manual", "created_at": (now - timedelta(days=4)).isoformat(), "updated_at": ts},
-        ]
-        await db.tickets.insert_many(tickets)
+        ])
 
-    if await db.settings.count_documents({}) == 0:
-        await db.settings.insert_one({
-            "_id": "app_settings", "refresh_interval": 30, "email_enabled": False,
-            "email_host": "", "email_port": 993, "email_username": "", "email_password": "",
-            "email_folder": "INBOX", "wug_sender_filter": "whatsupgold",
-            "vivantio_api_url": "", "vivantio_api_key": "", "vivantio_password": "", "aruba_api_url": "", "aruba_api_key": "",
-            "unifi_syslog_port": 5140, "unifi_syslog_enabled": True,
-            "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000, "wazuh_indexer_port": 9200,
-            "wazuh_username": "", "wazuh_password": "", "wazuh_indexer_username": "",
-            "wazuh_indexer_password": "", "wazuh_enabled": False,
-            "kiosk_enabled": False, "kiosk_interval": 30,
-        })
-    else:
-        # Migrate: ensure Wazuh fields exist for existing installs
-        await db.settings.update_one(
-            {"_id": "app_settings", "wazuh_url": {"$exists": False}},
-            {"$set": {
-                "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000, "wazuh_indexer_port": 9200,
-                "wazuh_username": "", "wazuh_password": "", "wazuh_indexer_username": "",
-                "wazuh_indexer_password": "", "wazuh_enabled": False,
-            }}
-        )
-        # Migrate: ensure kiosk fields exist for existing installs
-        await db.settings.update_one(
-            {"_id": "app_settings", "kiosk_enabled": {"$exists": False}},
-            {"$set": {"kiosk_enabled": False, "kiosk_interval": 30}}
-        )
-        # Migrate: ensure vivantio_password exists for existing installs
-        await db.settings.update_one(
-            {"_id": "app_settings", "vivantio_password": {"$exists": False}},
-            {"$set": {"vivantio_password": ""}}
-        )
-        # Seed Vivantio credentials if not already set
-        await db.settings.update_one(
-            {"_id": "app_settings", "vivantio_api_url": {"$in": ["", None]}},
-            {"$set": {
-                "vivantio_api_url": "https://mimilk.api.vivantio.com",
-                "vivantio_api_key": "api_MichiganMilkProducersAssociation_wfF2GF8BfV@mimilk.com",
-                "vivantio_password": "fMAriamiKomAw7zYKaAJ",
-            }}
-        )
-
-    if await db.unifi_events.count_documents({}) == 0:
-        unifi_seed = [
+    if not _unifi_events_store:
+        _unifi_events_store.extend([
             {"id": str(uuid.uuid4()), "raw": "<30>Jan  1 10:15:32 NOVI-UAP-PRO hostapd: STA aa:bb:cc:dd:ee:ff IEEE 802.11: authenticated", "source_ip": "192.168.1.100", "severity": "info",     "device": "NOVI-UAP-PRO",    "message": "hostapd: STA aa:bb:cc:dd:ee:ff IEEE 802.11: authenticated", "created_at": (now - timedelta(minutes=2)).isoformat()},
-            {"id": str(uuid.uuid4()), "raw": "<28>Jan  1 10:14:01 REMUS-UDM kernel: [WAN_LOCAL-default-D]IN=eth8 SRC=45.33.32.156 DST=203.0.113.1 PROTO=TCP DPT=22 DROP", "source_ip": "192.168.2.1", "severity": "warning",  "device": "REMUS-UDM",        "message": "kernel: [WAN_LOCAL-default-D] SRC=45.33.32.156 DST=203.0.113.1 PROTO=TCP DPT=22 DROP", "created_at": (now - timedelta(minutes=8)).isoformat()},
-            {"id": str(uuid.uuid4()), "raw": "<26>Jan  1 10:10:44 CONST-SW01 kernel: [WAN_IN-3-A]IN=eth8 OUT=eth0 SRC=10.0.0.1 DST=10.0.0.2 PROTO=UDP block", "source_ip": "192.168.3.1", "severity": "warning",  "device": "CONST-SW01",       "message": "kernel: [WAN_IN-3-A] SRC=10.0.0.1 DST=10.0.0.2 PROTO=UDP block", "created_at": (now - timedelta(minutes=15)).isoformat()},
-            {"id": str(uuid.uuid4()), "raw": "<134>Jan  1 10:05:12 NOVI-UDM mcad: ath0: STA 11:22:33:44:55:66 deauthenticated due to inactivity", "source_ip": "192.168.1.1", "severity": "info",     "device": "NOVI-UDM",         "message": "mcad: ath0: STA 11:22:33:44:55:66 deauthenticated due to inactivity", "created_at": (now - timedelta(minutes=20)).isoformat()},
-            {"id": str(uuid.uuid4()), "raw": "<0>Jan  1 10:00:00 CANTON-P-FW01 kernel: CRITICAL port scan detected 185.220.101.45 – 142 ports in 30s", "source_ip": "10.100.1.1",  "severity": "critical", "device": "CANTON-P-FW01",    "message": "kernel: CRITICAL port scan detected from 185.220.101.45 – 142 ports in 30s", "created_at": (now - timedelta(minutes=25)).isoformat()},
-            {"id": str(uuid.uuid4()), "raw": "<30>Jan  1 09:55:00 NOVI-UAP-PRO hostapd: STA cc:dd:ee:ff:00:11 IEEE 802.11: associated (AID 3)", "source_ip": "192.168.1.100", "severity": "info",     "device": "NOVI-UAP-PRO",    "message": "hostapd: STA cc:dd:ee:ff:00:11 IEEE 802.11: associated (AID 3)", "created_at": (now - timedelta(minutes=30)).isoformat()},
-            {"id": str(uuid.uuid4()), "raw": "<28>Jan  1 09:50:11 MT-PLEASANT-UDM firewall: deny SRC=203.0.113.99 DST=10.50.0.1 DPT=3389 DROP", "source_ip": "10.50.0.254",  "severity": "warning",  "device": "MT-PLEASANT-UDM",  "message": "firewall: deny SRC=203.0.113.99 DST=10.50.0.1 DPT=3389 DROP", "created_at": (now - timedelta(minutes=40)).isoformat()},
-            {"id": str(uuid.uuid4()), "raw": "<30>Jan  1 09:45:00 MIDDLEBURY-AP hostapd: STA ff:ee:dd:cc:bb:aa IEEE 802.11: disassociated", "source_ip": "10.80.0.10",   "severity": "info",     "device": "MIDDLEBURY-AP",    "message": "hostapd: STA ff:ee:dd:cc:bb:aa IEEE 802.11: disassociated", "created_at": (now - timedelta(minutes=50)).isoformat()},
-        ]
-        await db.unifi_events.insert_many(unifi_seed)
+            {"id": str(uuid.uuid4()), "raw": "<28>Jan  1 10:14:01 REMUS-UDM kernel: [WAN_LOCAL-default-D] SRC=45.33.32.156 DROP", "source_ip": "192.168.2.1", "severity": "warning",  "device": "REMUS-UDM",        "message": "kernel: [WAN_LOCAL-default-D] SRC=45.33.32.156 DPT=22 DROP", "created_at": (now - timedelta(minutes=8)).isoformat()},
+            {"id": str(uuid.uuid4()), "raw": "<0>Jan  1 10:00:00 CANTON-P-FW01 kernel: CRITICAL port scan detected 185.220.101.45", "source_ip": "10.100.1.1",  "severity": "critical", "device": "CANTON-P-FW01",    "message": "kernel: CRITICAL port scan detected from 185.220.101.45 – 142 ports in 30s", "created_at": (now - timedelta(minutes=25)).isoformat()},
+        ])
 
-    logger.info("Demo data seeded")
+    # Ensure circuits.yml exists with seed data if empty
+    if not CIRCUITS_FILE.exists():
+        ts = datetime.now(timezone.utc).isoformat()
+        save_circuits([
+            {"id": str(uuid.uuid4()), "site": "Remus",           "provider": "AT&T",            "circuit_id": "ATT-MR-4521",   "bandwidth_mbps": 100,  "ip_address": "203.0.113.1",   "status": "down",     "notes": "Circuit reported down by WUG",    "created_at": ts},
+            {"id": str(uuid.uuid4()), "site": "Ovid",            "provider": "Comcast Business", "circuit_id": "CMCST-OV-8832", "bandwidth_mbps": 100,  "ip_address": "198.51.100.2",  "status": "up",       "notes": "",                                 "created_at": ts},
+            {"id": str(uuid.uuid4()), "site": "Mt. Pleasant",    "provider": "AT&T",            "circuit_id": "ATT-MTP-9912",  "bandwidth_mbps": 200,  "ip_address": "203.0.113.10",  "status": "up",       "notes": "",                                 "created_at": ts},
+            {"id": str(uuid.uuid4()), "site": "Constantine",     "provider": "Spectrum Business","circuit_id": "SPEC-CN-1145",  "bandwidth_mbps": 50,   "ip_address": "192.0.2.5",     "status": "degraded", "notes": "Intermittent packet loss reported", "created_at": ts},
+            {"id": str(uuid.uuid4()), "site": "Novi",            "provider": "AT&T",            "circuit_id": "ATT-NV-0034",   "bandwidth_mbps": 1000, "ip_address": "203.0.113.20",  "status": "up",       "notes": "Primary HQ - 1Gbps dedicated fiber","created_at": ts},
+            {"id": str(uuid.uuid4()), "site": "Canton Plant",    "provider": "Spectrum Business","circuit_id": "SPEC-CP-7721",  "bandwidth_mbps": 200,  "ip_address": "192.0.2.30",    "status": "up",       "notes": "",                                 "created_at": ts},
+            {"id": str(uuid.uuid4()), "site": "Canton Warehouse","provider": "Comcast Business", "circuit_id": "CMCST-CW-5543", "bandwidth_mbps": 100,  "ip_address": "198.51.100.40", "status": "up",       "notes": "",                                 "created_at": ts},
+            {"id": str(uuid.uuid4()), "site": "Middlebury",      "provider": "AT&T",            "circuit_id": "ATT-MB-2267",   "bandwidth_mbps": 100,  "ip_address": "203.0.113.50",  "status": "up",       "notes": "",                                 "created_at": ts},
+        ])
+
+    # Ensure circuits in YAML have UUIDs
+    circuits = load_circuits()
+    changed = False
+    for c in circuits:
+        if not c.get("id"):
+            c["id"] = str(uuid.uuid4())
+            changed = True
+        if not c.get("created_at"):
+            c["created_at"] = datetime.now(timezone.utc).isoformat()
+            changed = True
+    if changed:
+        save_circuits(circuits)
+
+    logger.info("Demo data seeded (in-memory stores + circuits.yml)")
+
 
 # ─── Background Tasks ─────────────────────────────────────────────
 async def background_email_poller():
     while True:
         try:
-            settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
-            if settings and settings.get("email_enabled") and settings.get("email_host"):
+            settings = load_settings()
+            if settings.get("email_enabled") and settings.get("email_host"):
                 await poll_email_for_alerts(settings)
         except Exception as e:
             logger.error(f"Email poll error: {e}")
@@ -641,44 +588,64 @@ async def poll_email_for_alerts(settings: dict):
         mail.login(settings["email_username"], settings["email_password"])
         mail.select(settings.get("email_folder", "INBOX"))
         sender_filter = settings.get("wug_sender_filter", "whatsupgold")
-        _, messages = mail.search(None, f'UNSEEN SUBJECT "{sender_filter}"')
-        for num in (messages[0].split() if messages[0] else []):
-            _, msg_data = mail.fetch(num, "(RFC822)")
-            email_msg = emaillib.message_from_bytes(msg_data[0][1])
-            subject = email_msg.get("Subject", "WUG Alert")
+        _, nums = mail.search(None, f'(UNSEEN FROM "{sender_filter}")')
+        for num in (nums[0].split() if nums[0] else []):
+            _, data = mail.fetch(num, "(RFC822)")
+            msg = emaillib.message_from_bytes(data[0][1])
+            subject = str(msg.get("Subject", "WUG Alert"))
             body = ""
-            if email_msg.is_multipart():
-                for part in email_msg.walk():
+            if msg.is_multipart():
+                for part in msg.walk():
                     if part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode(errors="ignore")
+                        body = part.get_payload(decode=True).decode("utf-8", errors="replace")
                         break
             else:
-                body = email_msg.get_payload(decode=True).decode(errors="ignore")
+                body = msg.get_payload(decode=True).decode("utf-8", errors="replace")
             alert_data = parse_wug_email(subject, body)
             doc = {"id": str(uuid.uuid4()), "acknowledged": False, "acknowledged_by": None, "acknowledged_at": None, "created_at": datetime.now(timezone.utc).isoformat(), **alert_data}
-            await db.alerts.insert_one(doc)
+            _alerts_store.append(doc)
             mail.store(num, "+FLAGS", "\\Seen")
         mail.logout()
     except Exception as e:
         logger.error(f"IMAP error: {e}")
 
+
+def parse_wug_email(subject: str, body: str) -> dict:
+    """Parse WUG email alert into severity/title/message."""
+    severity = "warning"
+    sub_lower = subject.lower()
+    if any(w in sub_lower for w in ["down", "critical", "unreachable", "failed"]):
+        severity = "critical"
+    elif any(w in sub_lower for w in ["up", "resolved", "ok", "success"]):
+        severity = "info"
+    device_match = re.search(r"(?:device|host)[:\s]+([^\n\r,]+)", body, re.I)
+    site_match = re.search(r"(?:site|location)[:\s]+([^\n\r,]+)", body, re.I)
+    return {
+        "title": subject[:200],
+        "message": body[:1000],
+        "severity": severity,
+        "source": "wug",
+        "device": device_match.group(1).strip() if device_match else None,
+        "site": site_match.group(1).strip() if site_match else None,
+    }
+
+
 # ─── Lifespan ─────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await seed_demo_data()
+    seed_demo_data()
     email_task    = asyncio.create_task(background_email_poller())
     aruba_task    = asyncio.create_task(background_aruba_warmer())
     vivantio_task = asyncio.create_task(background_vivantio_warmer())
     dd_task       = asyncio.create_task(background_dd_token_refresher())
     unifi_task    = asyncio.create_task(background_unifi_warmer())
 
-    # Start UniFi syslog UDP listener
-    syslog_port = int(os.environ.get("UNIFI_SYSLOG_PORT", "5140"))
+    syslog_port = int(load_settings().get("unifi_syslog_port", 5140))
     transport = None
     try:
         loop = asyncio.get_event_loop()
         transport, _ = await loop.create_datagram_endpoint(
-            lambda: UnifiSyslogProtocol(db),
+            lambda: UnifiSyslogProtocol(),
             local_addr=("0.0.0.0", syslog_port),
         )
         logger.info(f"UniFi syslog listener active on UDP:{syslog_port}")
@@ -687,34 +654,16 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    email_task.cancel()
-    aruba_task.cancel()
-    vivantio_task.cancel()
-    dd_task.cancel()
-    unifi_task.cancel()
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task):
+        task.cancel()
     if transport:
         transport.close()
-    try:
-        await email_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await aruba_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await vivantio_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await dd_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await unifi_task
-    except asyncio.CancelledError:
-        pass
-    mongo_client.close()
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
 
 app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
@@ -727,16 +676,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ─── Routes ───────────────────────────────────────────────────────
 @api_router.get("/")
 async def root():
-    return {"status": "IT Dashboard API online", "version": "1.0.0"}
+    return {"status": "IT Dashboard API online", "version": "2.0.0", "storage": "yaml"}
 
 @api_router.get("/dashboard/summary")
 async def dashboard_summary():
-    alerts   = await db.alerts.find({}, {"_id": 0}).to_list(1000)
-    circuits = (await get_aruba_circuits_live()) or (await db.circuits.find({}, {"_id": 0}).to_list(1000))
-    tickets  = await db.tickets.find({}, {"_id": 0}).to_list(1000)
+    alerts   = _alerts_store
+    circuits = (await get_aruba_circuits_live()) or load_circuits()
+    tickets  = _tickets_store
     return {
         "alerts": {
             "total": len(alerts),
@@ -761,21 +711,20 @@ async def dashboard_summary():
 
 @api_router.get("/alerts")
 async def get_alerts(severity: str = None, site: str = None, acknowledged: bool = None):
-    query = {}
+    items = _alerts_store
     if severity:
-        query["severity"] = severity
+        items = [a for a in items if a.get("severity") == severity]
     if site:
-        query["site"] = site
+        items = [a for a in items if a.get("site") == site]
     if acknowledged is not None:
-        query["acknowledged"] = acknowledged
-    alerts = await db.alerts.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return {"items": alerts, "total": len(alerts)}
+        items = [a for a in items if a.get("acknowledged") == acknowledged]
+    items = sorted(items, key=lambda a: a.get("created_at", ""), reverse=True)[:200]
+    return {"items": items, "total": len(items)}
 
 @api_router.post("/alerts")
 async def create_alert(alert: AlertCreate):
     doc = {"id": str(uuid.uuid4()), "acknowledged": False, "acknowledged_by": None, "acknowledged_at": None, "created_at": datetime.now(timezone.utc).isoformat(), **alert.model_dump()}
-    await db.alerts.insert_one(doc)
-    doc.pop("_id", None)
+    _alerts_store.append(doc)
     return doc
 
 @api_router.post("/alerts/email-webhook")
@@ -784,32 +733,30 @@ async def email_webhook(payload: dict):
     body = payload.get("body", "")
     alert_data = parse_wug_email(subject, body)
     doc = {"id": str(uuid.uuid4()), "acknowledged": False, "acknowledged_by": None, "acknowledged_at": None, "created_at": datetime.now(timezone.utc).isoformat(), **alert_data}
-    await db.alerts.insert_one(doc)
-    doc.pop("_id", None)
+    _alerts_store.append(doc)
     return doc
 
 @api_router.put("/alerts/{alert_id}/acknowledge")
 async def acknowledge_alert(alert_id: str, by: str = "admin"):
-    result = await db.alerts.update_one(
-        {"id": alert_id},
-        {"$set": {"acknowledged": True, "acknowledged_by": by, "acknowledged_at": datetime.now(timezone.utc).isoformat()}}
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return {"success": True}
+    for a in _alerts_store:
+        if a["id"] == alert_id:
+            a.update({"acknowledged": True, "acknowledged_by": by, "acknowledged_at": datetime.now(timezone.utc).isoformat()})
+            return {"success": True}
+    raise HTTPException(status_code=404, detail="Alert not found")
 
 @api_router.delete("/alerts/{alert_id}")
 async def delete_alert(alert_id: str):
-    result = await db.alerts.delete_one({"id": alert_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return {"success": True}
+    for i, a in enumerate(_alerts_store):
+        if a["id"] == alert_id:
+            _alerts_store.pop(i)
+            return {"success": True}
+    raise HTTPException(status_code=404, detail="Alert not found")
+
 
 # ─── Aruba SD-WAN Helpers ─────────────────────────────────────────────────────
 
 ARUBA_STATE_MAP = {1: "up", 2: "degraded", 3: "down", 4: "unknown", 0: "unknown"}
 
-# Normalize Orchestrator site names → dashboard site names
 SITE_NAME_MAP = {
     "cantonment":          "Canton",
     "cantonwhs-edge-01":   "Canton Warehouse",
@@ -820,9 +767,8 @@ SITE_NAME_MAP = {
 def normalize_site(name: str) -> str:
     return SITE_NAME_MAP.get(name.lower(), name)
 
-# ─── In-memory cache (survives hot-reload, resets on restart) ─────────────────
 _aruba_cache: dict = {}
-ARUBA_CACHE_TTL = 300  # 5 minutes — Aruba topology changes slowly
+ARUBA_CACHE_TTL = 300
 
 def _cache_get(key: str):
     entry = _aruba_cache.get(key)
@@ -834,7 +780,7 @@ def _cache_set(key: str, data):
     _aruba_cache[key] = {"data": data, "ts": time.time()}
 
 async def aruba_request(method: str, endpoint: str, body=None):
-    cfg = await db.settings.find_one({"_id": "app_settings"})
+    cfg  = load_settings()
     base = (cfg.get("aruba_api_url") or "").rstrip("/")
     key  = cfg.get("aruba_api_key") or ""
     if not base or not key:
@@ -854,11 +800,10 @@ async def aruba_request(method: str, endpoint: str, body=None):
 
 async def background_aruba_warmer():
     """Warm Aruba caches on startup and refresh every 5 minutes."""
-    await asyncio.sleep(5)  # Let the server fully start first
+    await asyncio.sleep(5)
     while True:
         try:
             await get_aruba_circuits_live()
-            # Warm the mesh cache too (inline logic to avoid circular import)
             apps = await aruba_request("GET", "/appliance")
             if apps:
                 ne_to_site = {a["id"]: normalize_site(a["site"]) for a in apps}
@@ -890,7 +835,7 @@ async def background_aruba_warmer():
                     logger.info(f"Aruba cache refreshed: {len(links)} mesh links")
         except Exception as e:
             logger.warning(f"Aruba background warmer error: {e}")
-        await asyncio.sleep(300)  # refresh every 5 minutes
+        await asyncio.sleep(300)
 
 
 async def get_aruba_circuits_live():
@@ -900,9 +845,8 @@ async def get_aruba_circuits_live():
 
     apps = await aruba_request("GET", "/appliance")
     if not apps:
-        return None  # Aruba not configured or unreachable — caller falls back to MongoDB
+        return None
 
-    # Build site -> status map from Aruba (status ONLY — do not use any other Aruba fields)
     site_status: dict = {}
     for a in apps:
         if a.get("site", "").lower() == "azure":
@@ -910,26 +854,26 @@ async def get_aruba_circuits_live():
         site   = normalize_site(a.get("site", ""))
         state  = a.get("state", 0)
         status = ARUBA_STATE_MAP.get(state, "unknown")
-        # Worst-case wins: down > degraded > up
         existing = site_status.get(site)
         if existing is None or status == "down" or (status == "degraded" and existing == "up"):
             site_status[site] = status
 
-    # Fetch static circuit data from MongoDB and ONLY overlay the live status from Aruba
-    db_circuits = await db.circuits.find({}, {"_id": 0}).sort("site", 1).to_list(100)
+    # Fetch static circuit data from YAML and ONLY overlay the live status from Aruba
+    yaml_circuits = load_circuits()
     now = datetime.now(timezone.utc).isoformat()
     merged = []
-    for c in db_circuits:
+    for c in sorted(yaml_circuits, key=lambda x: x.get("site", "")):
         site         = c.get("site", "")
         aruba_status = site_status.get(site)
         merged.append({
-            **c,  # bandwidth_mbps, provider, circuit_id, ip_address, notes — all from MongoDB
+            **c,
             "status":       aruba_status if aruba_status is not None else c.get("status", "unknown"),
             "last_checked": now,
         })
 
     _cache_set("circuits", merged)
     return merged
+
 
 # ─── Aruba API Endpoints ───────────────────────────────────────────────────────
 
@@ -938,10 +882,7 @@ async def aruba_status():
     result = await aruba_request("GET", "/alarm/summary")
     if result is None:
         return {"connected": False, "reason": "Cannot reach Aruba Orchestrator — check URL and API key in Settings"}
-    return {
-        "connected": True,
-        "alarms":    result,
-    }
+    return {"connected": True, "alarms": result}
 
 @api_router.get("/aruba/mesh")
 async def aruba_mesh():
@@ -985,79 +926,92 @@ async def aruba_mesh():
     _cache_set("mesh", result)
     return result
 
+
+# ─── Circuit CRUD (circuits.yml) ──────────────────────────────────
+
 @api_router.get("/circuits")
 async def get_circuits():
     live = await get_aruba_circuits_live()
     if live is not None:
         return live
-    return await db.circuits.find({}, {"_id": 0}).sort("site", 1).to_list(100)
+    return sorted(load_circuits(), key=lambda c: c.get("site", ""))
 
 @api_router.post("/circuits")
 async def create_circuit(circuit: CircuitCreate):
     ts = datetime.now(timezone.utc).isoformat()
     doc = {"id": str(uuid.uuid4()), "last_checked": ts, "created_at": ts, **circuit.model_dump()}
-    await db.circuits.insert_one(doc)
-    doc.pop("_id", None)
-    _aruba_cache.pop("circuits", None)  # Invalidate cache so next request picks up new circuit
+    circuits = load_circuits()
+    circuits.append(doc)
+    save_circuits(circuits)
+    _aruba_cache.pop("circuits", None)
     return doc
 
 @api_router.put("/circuits/{circuit_id}")
 async def update_circuit(circuit_id: str, data: CircuitCreate):
-    update = {**data.model_dump(), "last_checked": datetime.now(timezone.utc).isoformat()}
-    result = await db.circuits.update_one({"id": circuit_id}, {"$set": update})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Circuit not found")
-    _aruba_cache.pop("circuits", None)  # Invalidate cache so edited bandwidth/provider shows immediately
-    return await db.circuits.find_one({"id": circuit_id}, {"_id": 0})
+    circuits = load_circuits()
+    for i, c in enumerate(circuits):
+        if c.get("id") == circuit_id:
+            circuits[i] = {**c, **data.model_dump(), "last_checked": datetime.now(timezone.utc).isoformat()}
+            save_circuits(circuits)
+            _aruba_cache.pop("circuits", None)
+            return circuits[i]
+    raise HTTPException(status_code=404, detail="Circuit not found")
 
 @api_router.delete("/circuits/{circuit_id}")
 async def delete_circuit(circuit_id: str):
-    result = await db.circuits.delete_one({"id": circuit_id})
-    if result.deleted_count == 0:
+    circuits = load_circuits()
+    new = [c for c in circuits if c.get("id") != circuit_id]
+    if len(new) == len(circuits):
         raise HTTPException(status_code=404, detail="Circuit not found")
-    _aruba_cache.pop("circuits", None)  # Invalidate cache
+    save_circuits(new)
+    _aruba_cache.pop("circuits", None)
     return {"success": True}
+
+
+# ─── Tickets (in-memory) ──────────────────────────────────────────
 
 @api_router.get("/tickets")
 async def get_tickets(status: str = None, priority: str = None):
-    query = {}
+    items = _tickets_store
     if status:
-        query["status"] = status
+        items = [t for t in items if t.get("status") == status]
     if priority:
-        query["priority"] = priority
-    tickets = await db.tickets.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return {"items": tickets, "total": len(tickets)}
+        items = [t for t in items if t.get("priority") == priority]
+    items = sorted(items, key=lambda t: t.get("created_at", ""), reverse=True)[:200]
+    return {"items": items, "total": len(items)}
 
 @api_router.post("/tickets")
 async def create_ticket(ticket: TicketCreate):
-    count = await db.tickets.count_documents({})
     now = datetime.now(timezone.utc).isoformat()
-    doc = {"id": str(uuid.uuid4()), "ticket_number": f"TKT-{1046 + count}", "source": "manual", "created_at": now, "updated_at": now, **ticket.model_dump()}
-    await db.tickets.insert_one(doc)
-    doc.pop("_id", None)
+    doc = {"id": str(uuid.uuid4()), "ticket_number": f"TKT-{1046 + len(_tickets_store)}", "source": "manual", "created_at": now, "updated_at": now, **ticket.model_dump()}
+    _tickets_store.append(doc)
     return doc
 
 @api_router.put("/tickets/{ticket_id}")
 async def update_ticket(ticket_id: str, data: dict):
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = await db.tickets.update_one({"id": ticket_id}, {"$set": data})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    return await db.tickets.find_one({"id": ticket_id}, {"_id": 0})
+    for t in _tickets_store:
+        if t["id"] == ticket_id:
+            t.update(data)
+            return t
+    raise HTTPException(status_code=404, detail="Ticket not found")
 
 @api_router.delete("/tickets/{ticket_id}")
 async def delete_ticket(ticket_id: str):
-    result = await db.tickets.delete_one({"id": ticket_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    return {"success": True}
+    for i, t in enumerate(_tickets_store):
+        if t["id"] == ticket_id:
+            _tickets_store.pop(i)
+            return {"success": True}
+    raise HTTPException(status_code=404, detail="Ticket not found")
+
+
+# ─── Vendor Status ─────────────────────────────────────────────────
 
 @api_router.get("/vendor-status")
 async def get_vendor_status():
-    # Try Downdetector when credentials are configured
-    settings = await db.settings.find_one({"_id": "app_settings"})
-    dd_id     = (settings or {}).get("downdetector_client_id", "")
-    dd_secret = (settings or {}).get("downdetector_client_secret", "")
+    settings  = load_settings()
+    dd_id     = settings.get("downdetector_client_id", "")
+    dd_secret = settings.get("downdetector_client_secret", "")
 
     dd_token = None
     if dd_id and dd_secret:
@@ -1066,6 +1020,9 @@ async def get_vendor_status():
     tasks = [check_vendor_status(v, dd_token) for v in VENDORS]
     results = await asyncio.gather(*tasks)
     return list(results)
+
+
+# ─── Sites ────────────────────────────────────────────────────────
 
 SITES_DATA = [
     {"id": "remus",           "name": "Remus",            "state": "MI", "coordinates": [-85.147, 43.598], "type": "office"},
@@ -1081,8 +1038,8 @@ SITES_DATA = [
 @api_router.get("/sites")
 async def get_sites():
     live_circuits = await get_aruba_circuits_live()
-    circuits      = live_circuits if live_circuits is not None else await db.circuits.find({}, {"_id": 0}).to_list(100)
-    alerts        = await db.alerts.find({"acknowledged": False}, {"_id": 0}).to_list(100)
+    circuits      = live_circuits if live_circuits is not None else load_circuits()
+    alerts        = [a for a in _alerts_store if not a.get("acknowledged")]
     sites = []
     for sd in SITES_DATA:
         site_circuits = [c for c in circuits if c["site"].lower() == sd["name"].lower()]
@@ -1096,52 +1053,47 @@ async def get_sites():
         sites.append({**sd, "status": status, "circuit_count": len(site_circuits), "alert_count": len(site_alerts)})
     return sites
 
+
+# ─── Settings (settings.yml) ──────────────────────────────────────
+
+HIDDEN_FIELDS = {"email_password", "wazuh_password", "wazuh_indexer_password", "downdetector_client_secret"}
+
 @api_router.get("/settings")
 async def get_settings():
-    s = await db.settings.find_one(
-        {"_id": "app_settings"},
-        {"_id": 0, "email_password": 0, "wazuh_password": 0, "wazuh_indexer_password": 0, "downdetector_client_secret": 0}
-    )
-    return s or {}
+    s = load_settings()
+    return {k: v for k, v in s.items() if k not in HIDDEN_FIELDS}
 
 @api_router.put("/settings")
 async def update_settings(data: SettingsUpdate):
-    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.settings.update_one({"_id": "app_settings"}, {"$set": update_data}, upsert=True)
-    return await db.settings.find_one(
-        {"_id": "app_settings"},
-        {"_id": 0, "email_password": 0, "wazuh_password": 0, "wazuh_indexer_password": 0}
-    )
+    update = {k: v for k, v in data.model_dump().items() if v is not None}
+    new_settings = save_settings(update)
+    return {k: v for k, v in new_settings.items() if k not in {"email_password", "wazuh_password", "wazuh_indexer_password"}}
+
 
 # ─── Wazuh API Endpoints ───────────────────────────────────────────
+
 @api_router.get("/wazuh/status")
 async def wazuh_connectivity():
-    """Test connection to Wazuh REST API."""
-    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
-    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+    settings = load_settings()
+    if not settings.get("wazuh_url") or not settings.get("wazuh_username"):
         return {"connected": False, "reason": "not_configured"}
     try:
-        _wazuh_token_cache.clear()  # Force fresh auth
+        _wazuh_token_cache.clear()
         await _wazuh_get_token(settings)
         return {"connected": True, "reason": "ok", "url": settings["wazuh_url"]}
     except httpx.ConnectTimeout:
-        return {"connected": False, "reason": f"Connection timeout – is {settings['wazuh_url']} reachable from this host?"}
+        return {"connected": False, "reason": f"Connection timeout – is {settings['wazuh_url']} reachable?"}
     except httpx.ConnectError:
-        return {"connected": False, "reason": f"Connection refused – check IP/port and that Wazuh API is running"}
+        return {"connected": False, "reason": "Connection refused – check IP/port and that Wazuh API is running"}
     except httpx.HTTPStatusError as exc:
         return {"connected": False, "reason": f"HTTP {exc.response.status_code} – check credentials"}
     except Exception as exc:
         return {"connected": False, "reason": str(exc)[:200]}
 
 @api_router.get("/wazuh/alerts")
-async def get_wazuh_alerts(
-    min_level: int = 3,
-    hours_back: int = 24,
-    limit: int = 200,
-    group: str = None,
-):
-    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
-    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+async def get_wazuh_alerts(min_level: int = 3, hours_back: int = 24, limit: int = 200, group: str = None):
+    settings = load_settings()
+    if not settings.get("wazuh_url") or not settings.get("wazuh_username"):
         raise HTTPException(status_code=503, detail="Wazuh not configured")
     try:
         alerts = await _wazuh_fetch_alerts(settings, min_level, hours_back, limit, group)
@@ -1152,8 +1104,8 @@ async def get_wazuh_alerts(
 
 @api_router.get("/wazuh/agents")
 async def get_wazuh_agents():
-    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
-    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+    settings = load_settings()
+    if not settings.get("wazuh_url") or not settings.get("wazuh_username"):
         raise HTTPException(status_code=503, detail="Wazuh not configured")
     try:
         agents = await _wazuh_fetch_agents(settings)
@@ -1164,10 +1116,9 @@ async def get_wazuh_agents():
 
 @api_router.get("/wazuh/summary")
 async def wazuh_summary():
-    """Alert counts by severity for the dashboard KPI card."""
-    settings = await db.settings.find_one({"_id": "app_settings"}, {"_id": 0})
+    settings = load_settings()
     empty = {"configured": False, "connected": False, "critical": 0, "high": 0, "medium": 0, "low": 0, "total_agents": 0}
-    if not settings or not settings.get("wazuh_url") or not settings.get("wazuh_username"):
+    if not settings.get("wazuh_url") or not settings.get("wazuh_username"):
         return empty
     try:
         alerts = await _wazuh_fetch_alerts(settings, min_level=1, hours_back=24, limit=500)
@@ -1187,22 +1138,30 @@ async def wazuh_summary():
         logger.error(f"Wazuh summary error: {exc}")
         return {**empty, "configured": True, "error": str(exc)[:120]}
 
+
+# ─── UniFi Syslog Events ──────────────────────────────────────────
+
 @api_router.get("/unifi-events")
 async def get_unifi_events(severity: str = None, limit: int = 200):
-    query = {}
+    items = _unifi_events_store
     if severity:
-        query["severity"] = severity
-    events = await db.unifi_events.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    return {"items": events, "total": len(events)}
+        items = [e for e in items if e.get("severity") == severity]
+    items = sorted(items, key=lambda e: e.get("created_at", ""), reverse=True)[:limit]
+    return {"items": items, "total": len(items)}
 
 @api_router.delete("/unifi-events")
 async def clear_unifi_events():
-    result = await db.unifi_events.delete_many({})
-    return {"deleted": result.deleted_count}
+    count = len(_unifi_events_store)
+    _unifi_events_store.clear()
+    return {"deleted": count}
+
+
+# ─── UniFi Network Devices ────────────────────────────────────────
 
 @api_router.get("/unifi/devices")
 async def get_unifi_devices_endpoint(demo: bool = False):
-    """Return all UniFi devices from both configured controllers (cache-first)."""
+    """Return all UniFi devices from both configured controllers (cache-first).
+    Pass ?demo=true to return sample data for UI preview."""
     if demo:
         return {"devices": [
             {"id":"sw01","name":"SW-CORE-01","model":"USW-Pro-24-POE","type":"switch","type_raw":"usw","status":"online","ip":"10.202.1.1","mac":"aa:bb:cc:01","uptime":2592000,"uptime_str":"30d 0h","version":"6.5.59","controller":"Mimilk","num_sta":0,"num_port":24},
@@ -1220,7 +1179,7 @@ async def get_unifi_devices_endpoint(demo: bool = False):
     if "devices" in _unifi_cache:
         return {"devices": _unifi_cache["devices"], "updated": _unifi_cache.get("updated")}
 
-    s = (await db.settings.find_one({"_id": "app_settings"})) or {}
+    s = load_settings()
     tasks = []
     if s.get("unifi_controller1_url") and s.get("unifi_controller1_username"):
         tasks.append(_fetch_unifi_controller(
@@ -1249,11 +1208,10 @@ async def get_unifi_devices_endpoint(demo: bool = False):
 # ─── Vivantio Ticketing ───────────────────────────────────────────────────────
 
 _vivantio_cache: dict = {"tickets": None, "ts": 0, "max_id": 27400}
-VIVANTIO_CACHE_TTL = 60  # seconds
+VIVANTIO_CACHE_TTL = 60
 
 VIVANTIO_PRIORITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 
-# Normalize Vivantio's inconsistent priority values to Critical/High/Medium/Low
 _PRIORITY_MAP = {
     "1": "Critical", "critical": "Critical",
     "2": "High",     "high": "High",
@@ -1261,104 +1219,84 @@ _PRIORITY_MAP = {
     "4": "Low",      "low": "Low",
 }
 
-def _normalize_priority(raw: str) -> str:
-    if not raw:
-        return "Medium"
-    key = raw.strip().split()[0].lower().rstrip("(").rstrip(")")
-    return _PRIORITY_MAP.get(key, _PRIORITY_MAP.get(raw.strip().lower(), "Medium"))
-
-# Statuses that mean the ticket is truly done — exclude from NOC view
-VIVANTIO_CLOSED_STATUSES = {"Merged", "Closed - Promoted", "Promoted", "Resolved", "Closed"}
-
-async def _vivantio_request(url: str, username: str, password: str, path: str, body=None):
-    """Make an authenticated request to the Vivantio API."""
-    import base64
-    token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=20, verify=False) as client:
-        r = await client.post(f"{url.rstrip('/')}/api/{path}", headers=headers, json=body or {})
-        r.raise_for_status()
-        return r.json()
-
-async def _vivantio_find_max_id(url: str, username: str, password: str, start: int) -> int:
-    """Walk forward from start to find the highest existing ticket ID."""
-    step = 100
-    current = start
-    # Walk forward in large steps until we overshoot
-    for _ in range(20):
-        data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{current + step}")
-        if data.get("Found"):
-            current += step
-        else:
-            break
-    # Fine-tune the boundary
-    lo, hi = current, current + step
-    for _ in range(10):
-        if hi - lo <= 1:
-            break
-        mid = (lo + hi) // 2
-        data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{mid}")
-        if data.get("Found"):
-            lo = mid
-        else:
-            hi = mid
-    return lo
-
 async def _vivantio_fetch_tickets(url: str, username: str, password: str) -> list:
-    """Scan last 200 ticket IDs, return active (non-closed) tickets."""
+    """Fetch active tickets from Vivantio. Uses ID-range polling strategy."""
+    auth = base64.b64encode(f"{username}:{password}".encode()).decode()
+    hdrs = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
+    base = url.rstrip("/")
     max_id = _vivantio_cache["max_id"]
 
-    # Probe ahead to update max_id
-    probe = max_id + 50
-    data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{probe}")
-    if data.get("Found"):
-        max_id = await _vivantio_find_max_id(url, username, password, probe)
-        _vivantio_cache["max_id"] = max_id
+    async with httpx.AsyncClient(timeout=20, verify=False) as c:
+        # Page through IDs in chunks of 500 to find all active tickets
+        id_batches = list(range(max_id - 2000, max_id + 100, 500))
+        all_ids: list[int] = []
+        for start in id_batches:
+            ids = list(range(start, start + 500))
+            r = await c.post(f"{base}/api/Ticket/SelectList", headers=hdrs, json=ids)
+            if r.status_code != 200:
+                continue
+            batch = r.json()
+            for t in batch:
+                tid = t.get("Id") or t.get("id")
+                if tid:
+                    all_ids.append(int(tid))
+                    if int(tid) > max_id:
+                        max_id = int(tid)
 
-    # Fetch last 200 IDs in one batch call
-    ids = list(range(max_id, max(max_id - 200, 0), -1))
-    raw = await _vivantio_request(url, username, password, "Ticket/SelectList", ids)
-    all_tickets = raw.get("Results", [])
+    _vivantio_cache["max_id"] = max_id
 
     active = []
-    for t in all_tickets:
-        if t.get("StatusType") == 4:
+    for t in (await _vivantio_all_tickets(url, username, password, all_ids)):
+        status_raw = (t.get("StatusName") or t.get("Status") or "").lower()
+        if status_raw in ("closed", "resolved", "cancelled", "canceled", "complete", "completed"):
             continue
-        if t.get("StatusName") in VIVANTIO_CLOSED_STATUSES:
-            continue
-        priority_raw = t.get("PriorityName", "") or ""
-        priority_key = _normalize_priority(priority_raw)
+        priority_raw = str(t.get("PriorityName") or t.get("Priority") or "4").lower()
+        priority = _PRIORITY_MAP.get(priority_raw, "Medium")
         active.append({
-            "id":           t.get("Id"),
-            "display_id":   t.get("DisplayId", str(t.get("Id"))),
-            "title":        t.get("Title", ""),
-            "status":       t.get("StatusName", ""),
-            "priority":     priority_key,
-            "priority_raw": priority_raw,
-            "assigned_to":  t.get("TakenByName") or t.get("OwnerName") or "",
-            "group":        t.get("GroupName", ""),
+            "id":           str(t.get("Id") or t.get("id", "")),
+            "ticket_number": f"TKT-{t.get('Id') or t.get('id', '')}",
+            "title":        t.get("Title") or t.get("title") or "(no title)",
+            "priority":     priority,
+            "status":       status_raw or "open",
+            "assignee":     t.get("AssigneeName") or t.get("Assignee") or "",
             "category":     t.get("CategoryLineage", ""),
             "type":         t.get("RecordTypeNameSingular", "Ticket"),
             "opened":       t.get("OpenDate", ""),
             "updated":      t.get("LastModifiedDate", ""),
         })
 
-    # Sort: Critical → High → Medium → Low, then newest first
     active.sort(key=lambda x: (
         VIVANTIO_PRIORITY_ORDER.get(x["priority"], 99),
         -(int(x["id"] or 0))
     ))
     return active
 
+
+async def _vivantio_all_tickets(url: str, username: str, password: str, ids: list) -> list:
+    if not ids:
+        return []
+    auth = base64.b64encode(f"{username}:{password}".encode()).decode()
+    hdrs = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
+    base = url.rstrip("/")
+    results = []
+    async with httpx.AsyncClient(timeout=20, verify=False) as c:
+        for i in range(0, len(ids), 200):
+            batch = ids[i:i+200]
+            r = await c.post(f"{base}/api/Ticket/SelectList", headers=hdrs, json=batch)
+            if r.status_code == 200:
+                results.extend(r.json())
+    return results
+
+
 async def background_vivantio_warmer():
     """Warm Vivantio ticket cache on startup and refresh every 60s."""
-    await asyncio.sleep(8)  # Let server fully start + Aruba warmer begin
+    await asyncio.sleep(8)
     while True:
         try:
-            settings = await db.settings.find_one({"_id": "app_settings"})
-            url      = (settings or {}).get("vivantio_api_url", "")
-            username = (settings or {}).get("vivantio_api_key", "")
-            password = (settings or {}).get("vivantio_password", "")
+            settings = load_settings()
+            url      = settings.get("vivantio_api_url", "")
+            username = settings.get("vivantio_api_key", "")
+            password = settings.get("vivantio_password", "")
             if url and username and password:
                 tickets = await _vivantio_fetch_tickets(url, username, password)
                 _vivantio_cache["tickets"] = tickets
@@ -1370,22 +1308,18 @@ async def background_vivantio_warmer():
 
 @api_router.get("/vivantio/tickets")
 async def get_vivantio_tickets():
-    settings = await db.settings.find_one({"_id": "app_settings"})
-    url      = (settings or {}).get("vivantio_api_url", "")
-    username = (settings or {}).get("vivantio_api_key", "")
-    password = (settings or {}).get("vivantio_password", "")
+    settings = load_settings()
+    url      = settings.get("vivantio_api_url", "")
+    username = settings.get("vivantio_api_key", "")
+    password = settings.get("vivantio_password", "")
 
     if not url or not username or not password:
-        return {"configured": False, "tickets": [], "total": 0,
-                "by_priority": {}, "by_status": {}}
+        return {"configured": False, "tickets": [], "total": 0, "by_priority": {}, "by_status": {}}
 
-    # Return from cache if fresh
     if _vivantio_cache["tickets"] is not None and \
        (time.time() - _vivantio_cache["ts"]) < VIVANTIO_CACHE_TTL:
-        tickets = _vivantio_cache["tickets"]
-        return _vivantio_summary(tickets, configured=True)
+        return _vivantio_summary(_vivantio_cache["tickets"], configured=True)
 
-    # Otherwise fetch live
     try:
         tickets = await _vivantio_fetch_tickets(url, username, password)
         _vivantio_cache["tickets"] = tickets
@@ -1412,7 +1346,6 @@ def _vivantio_summary(tickets: list, configured: bool) -> dict:
         "by_priority": by_priority,
         "by_status":   by_status,
     }
-
 
 
 app.include_router(api_router)

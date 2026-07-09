@@ -1,0 +1,57 @@
+# IT Command Center — Settings
+# Edit this file to configure the dashboard.
+# The backend hot-reloads this file automatically — no restart needed.
+
+# ── General ──────────────────────────────────────────────
+refresh_interval: 30
+kiosk_enabled: false
+kiosk_interval: 30
+
+# ── Email / WUG Polling ──────────────────────────────────
+email_enabled: false
+email_host: ""
+email_port: 993
+email_username: ""
+email_password: ""
+email_folder: "INBOX"
+wug_sender_filter: "whatsupgold"
+
+# ── Vivantio ITSM ────────────────────────────────────────
+vivantio_api_url: "https://mimilk.api.vivantio.com"
+vivantio_api_key: "api_MichiganMilkProducersAssociation_wfF2GF8BfV@mimilk.com"
+vivantio_password: "fMAriamiKomAw7zYKaAJ"
+
+# ── HP Aruba EdgeConnect ─────────────────────────────────
+aruba_api_url: ""
+aruba_api_key: ""
+
+# ── Wazuh SIEM ───────────────────────────────────────────
+# LAN IP — only reachable from the Raspberry Pi on local network
+wazuh_enabled: false
+wazuh_url: "10.202.10.70"
+wazuh_api_port: 55000
+wazuh_indexer_port: 9200
+wazuh_username: ""
+wazuh_password: ""
+wazuh_indexer_username: ""
+wazuh_indexer_password: ""
+
+# ── Downdetector API ─────────────────────────────────────
+downdetector_client_id: ""
+downdetector_client_secret: ""
+
+# ── UniFi Network Controllers ────────────────────────────
+unifi_syslog_port: 5140
+unifi_syslog_enabled: true
+
+unifi_controller1_url: "https://unifi.mimilk.com:8443"
+unifi_controller1_username: "noc-readonly"
+unifi_controller1_password: "PYJ28IT5zQeK!"
+unifi_controller1_site: "default"
+unifi_controller1_label: "Mimilk"
+
+unifi_controller2_url: ""
+unifi_controller2_username: ""
+unifi_controller2_password: ""
+unifi_controller2_site: "default"
+unifi_controller2_label: ""

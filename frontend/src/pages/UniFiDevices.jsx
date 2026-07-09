@@ -127,9 +127,11 @@ export default function UniFiDevices() {
   const online  = devices.filter(d => d.status === "online").length;
   const offline = devices.filter(d => d.status === "offline").length;
 
-  // Group by type then controller
+  // Group by type, offline devices sorted to top within each group
   const grouped = TYPE_ORDER.reduce((acc, type) => {
-    const items = devices.filter(d => d.type === type);
+    const items = devices
+      .filter(d => d.type === type)
+      .sort((a, b) => (a.status === "online" ? 1 : 0) - (b.status === "online" ? 1 : 0));
     if (items.length) acc[type] = items;
     return acc;
   }, {});
