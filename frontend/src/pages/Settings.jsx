@@ -24,6 +24,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
   const [emailPwd, setEmailPwd] = useState("");
+  const [ddSecret, setDdSecret] = useState("");  // Downdetector client_secret (write-only)
 
   const load = useCallback(async () => {
     try { const res = await axios.get(`${API}/settings`); setSettings(res.data || {}); }
@@ -38,6 +39,7 @@ export default function Settings() {
     try {
       const payload = { ...settings };
       if (emailPwd) payload.email_password = emailPwd;
+      if (ddSecret)  payload.downdetector_client_secret = ddSecret;
       await axios.put(`${API}/settings`, payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -290,6 +292,46 @@ export default function Settings() {
               <code style={{ color: "#52525B", background: "rgba(0,0,0,0.4)", padding: "1px 6px" }}>wazuh-alerts-*</code>
               {" "}index. Rule groups (UniFi, WUG, HP…) are read from{" "}
               <code style={{ color: "#52525B", background: "rgba(0,0,0,0.4)", padding: "1px 6px" }}>rule.groups[]</code>.
+            </p>
+          </div>
+        </Section>
+
+        {/* Downdetector */}
+        <Section title="DOWNDETECTOR API">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <div className="section-label mb-1.5">CLIENT ID</div>
+              <input
+                data-testid="settings-downdetector_client_id"
+                placeholder="key-id from Downdetector Dashboard"
+                className="input"
+                value={settings.downdetector_client_id || ""}
+                onChange={e => set("downdetector_client_id", e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="section-label mb-1.5">CLIENT SECRET</div>
+              <input
+                data-testid="settings-downdetector_client_secret"
+                type="password"
+                placeholder={settings.downdetector_client_id ? "• • • • • • (saved — paste to change)" : "key-secret from Downdetector Dashboard"}
+                className="input"
+                value={ddSecret}
+                onChange={e => setDdSecret(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="mt-4 p-3" style={{ background: "rgba(0,229,255,0.02)", border: "1px solid rgba(0,229,255,0.08)" }}>
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3F3F46", lineHeight: 2 }}>
+              <span style={{ color: "#00E5FF", letterSpacing: "0.1em" }}>SETUP:</span>{" "}
+              Sign up at{" "}
+              <a href="https://downdetector.com/enterprise" target="_blank" rel="noopener noreferrer"
+                style={{ color: "#52525B", textDecoration: "underline" }}>
+                downdetector.com/enterprise
+              </a>
+              {" "}→ Dashboard → API Tokens → Generate client.{" "}
+              When configured, the Vendor Status page will use Downdetector's live crowd-sourced outage data for{" "}
+              <span style={{ color: "#A1A1AA" }}>CrowdStrike, NinjaOne, Zscaler, Microsoft 365 &amp; Dynamics 365</span>.
             </p>
           </div>
         </Section>

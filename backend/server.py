@@ -72,6 +72,8 @@ class SettingsUpdate(BaseModel):
     wazuh_enabled: Optional[bool] = None
     kiosk_enabled: Optional[bool] = None
     kiosk_interval: Optional[int] = None
+    downdetector_client_id: Optional[str] = None
+    downdetector_client_secret: Optional[str] = None
 
 # ─── UniFi Syslog ─────────────────────────────────────────────────
 def parse_unifi_syslog(raw: str) -> dict:
@@ -218,14 +220,108 @@ async def _wazuh_fetch_agents(settings: dict) -> list:
 
 # ─── Vendor Status ────────────────────────────────────────────────
 VENDORS = [
-    {"id": "crowdstrike", "name": "CrowdStrike", "status_url": "https://status.crowdstrike.com/api/v2/summary.json", "web_url": "https://status.crowdstrike.com"},
-    {"id": "ninjaone", "name": "NinjaOne (RMM)", "status_url": "https://status.ninjarmm.com/api/v2/summary.json", "web_url": "https://status.ninjarmm.com"},
-    {"id": "zscaler", "name": "Zscaler", "status_url": "https://trust.zscaler.com/api/v2/summary.json", "web_url": "https://trust.zscaler.com"},
-    {"id": "microsoft365", "name": "Microsoft 365", "status_url": "https://status.office365.com/api/v2/summary.json", "web_url": "https://status.office365.com"},
-    {"id": "dynamics365", "name": "Dynamics 365", "status_url": None, "web_url": "https://admin.powerplatform.microsoft.com/"},
+    {"id": "crowdstrike",  "name": "CrowdStrike",    "dd_slug": "crowdstrike",             "status_url": "https://status.crowdstrike.com/api/v2/summary.json",  "web_url": "https://status.crowdstrike.com"},
+    {"id": "ninjaone",     "name": "NinjaOne (RMM)", "dd_slug": "ninjarmm",                "status_url": "https://status.ninjarmm.com/api/v2/summary.json",     "web_url": "https://status.ninjarmm.com"},
+    {"id": "zscaler",      "name": "Zscaler",        "dd_slug": "zscaler",                 "status_url": "https://trust.zscaler.com/api/v2/summary.json",       "web_url": "https://trust.zscaler.com"},
+    {"id": "microsoft365", "name": "Microsoft 365",  "dd_slug": "microsoft-office-365",    "status_url": "https://status.office365.com/api/v2/summary.json",    "web_url": "https://status.office365.com"},
+    {"id": "dynamics365",  "name": "Dynamics 365",   "dd_slug": "microsoft-dynamics-365",  "status_url": None,                                                  "web_url": "https://admin.powerplatform.microsoft.com/"},
 ]
 
-async def check_vendor_status(vendor: dict) -> dict:
+# ─── Downdetector API helpers ──────────────────────────────────────────────────
+
+_dd_token_cache: dict = {"token": None, "expires_at": 0.0}
+_dd_company_id_cache: dict = {}  # vendor_id -> Downdetector company_id (cached per process)
+
+async def _dd_get_token(client_id: str, client_secret: str) -> Optional[str]:
+    """Obtain (or return cached) Downdetector Bearer token. Expires in 1 h."""
+    now = time.time()
+    if _dd_token_cache["token"] and now < _dd_token_cache["expires_at"] - 60:
+        return _dd_token_cache["token"]
+    try:
+        encoded = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(
+                "https://downdetectorapi.com/v2/tokens?grant_type=client_credentials",
+                headers={"Authorization": f"Basic {encoded}"}
+            )
+            if r.status_code == 200:
+                data = r.json()
+                _dd_token_cache["token"]      = data["access_token"]
+                _dd_token_cache["expires_at"] = now + data.get("expires_in", 3600)
+                logger.info("Downdetector token obtained")
+                return _dd_token_cache["token"]
+            logger.warning(f"Downdetector token HTTP {r.status_code}: {r.text[:120]}")
+    except Exception as e:
+        logger.warning(f"Downdetector token error: {e}")
+    return None
+
+async def _dd_get_company_id(token: str, vendor_id: str, dd_slug: str) -> Optional[int]:
+    """Search Downdetector for a company by slug and cache the integer company_id."""
+    if vendor_id in _dd_company_id_cache:
+        return _dd_company_id_cache[vendor_id]
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"https://downdetectorapi.com/v2/companies/search?q={dd_slug}",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if r.status_code == 200:
+                results = r.json()
+                if results:
+                    company_id = results[0].get("id")
+                    if company_id:
+                        _dd_company_id_cache[vendor_id] = company_id
+                        logger.info(f"Downdetector: {vendor_id} -> company_id {company_id}")
+                        return company_id
+    except Exception as e:
+        logger.warning(f"Downdetector company search error for {vendor_id}: {e}")
+    return None
+
+async def _dd_check_status(vendor: dict, token: str) -> dict:
+    """Check a single vendor's status via the Downdetector API."""
+    result = {
+        "id": vendor["id"], "name": vendor["name"],
+        "status": "unknown", "description": "Checking via Downdetector…",
+        "last_checked": datetime.now(timezone.utc).isoformat(),
+        "web_url": vendor["web_url"], "incidents": [], "source": "downdetector"
+    }
+    company_id = await _dd_get_company_id(token, vendor["id"], vendor.get("dd_slug", vendor["id"]))
+    if not company_id:
+        result["description"] = "Not found on Downdetector"
+        return result
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"https://downdetectorapi.com/v2/companies/{company_id}/status",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if r.status_code == 200:
+                data = r.json()
+                dd_status = data.get("status", "unknown")
+                DD_STATUS_MAP = {"success": "operational", "warning": "minor_outage", "danger": "major_outage"}
+                result["status"] = DD_STATUS_MAP.get(dd_status, "unknown")
+                # Try to surface a useful description from report counts
+                baseline = data.get("baseline_current") or {}
+                reports  = baseline.get("reports_value", 0) if isinstance(baseline, dict) else 0
+                if result["status"] == "operational":
+                    result["description"] = "No problems detected"
+                elif reports:
+                    result["description"] = f"{reports} user reports in the last hour"
+                else:
+                    result["description"] = "Issues reported by users"
+            else:
+                result["description"] = f"Downdetector returned HTTP {r.status_code}"
+    except Exception as e:
+        logger.warning(f"Downdetector status error for {vendor['name']}: {e}")
+        result["description"] = "Could not reach Downdetector"
+    return result
+
+async def check_vendor_status(vendor: dict, dd_token: Optional[str] = None) -> dict:
+    """Check vendor status — uses Downdetector if token available, else falls back to public status pages."""
+    if dd_token:
+        return await _dd_check_status(vendor, dd_token)
+
+    # Fallback: poll vendor's own public Statuspage.io / status page
     result = {"id": vendor["id"], "name": vendor["name"], "status": "unknown", "description": "Status unavailable", "last_checked": datetime.now(timezone.utc).isoformat(), "web_url": vendor["web_url"], "incidents": []}
     if not vendor.get("status_url"):
         result["description"] = "No public status page configured"
@@ -622,28 +718,39 @@ async def get_aruba_circuits_live():
     cached = _cache_get("circuits")
     if cached is not None:
         return cached
+
     apps = await aruba_request("GET", "/appliance")
     if not apps:
-        return None
-    circuits = []
+        return None  # Aruba not configured or unreachable — caller falls back to MongoDB
+
+    # Build site -> status map from Aruba (status ONLY — do not use any other Aruba fields)
+    site_status: dict = {}
     for a in apps:
         if a.get("site", "").lower() == "azure":
             continue
+        site   = normalize_site(a.get("site", ""))
         state  = a.get("state", 0)
         status = ARUBA_STATE_MAP.get(state, "unknown")
-        circuits.append({
-            "id":            a["id"],
-            "site":          normalize_site(a.get("site", "")),
-            "provider":      "Aruba SD-WAN",
-            "circuit_id":    a.get("serial", a["id"]),
-            "bandwidth_mbps": int(a.get("systemBandwidth", 0) / 1_000_000) or 1000,
-            "status":        status,
-            "model":         a.get("model", ""),
-            "hostname":      a.get("hostName", ""),
-            "last_checked":  datetime.now(timezone.utc).isoformat(),
+        # Worst-case wins: down > degraded > up
+        existing = site_status.get(site)
+        if existing is None or status == "down" or (status == "degraded" and existing == "up"):
+            site_status[site] = status
+
+    # Fetch static circuit data from MongoDB and ONLY overlay the live status from Aruba
+    db_circuits = await db.circuits.find({}, {"_id": 0}).sort("site", 1).to_list(100)
+    now = datetime.now(timezone.utc).isoformat()
+    merged = []
+    for c in db_circuits:
+        site         = c.get("site", "")
+        aruba_status = site_status.get(site)
+        merged.append({
+            **c,  # bandwidth_mbps, provider, circuit_id, ip_address, notes — all from MongoDB
+            "status":       aruba_status if aruba_status is not None else c.get("status", "unknown"),
+            "last_checked": now,
         })
-    _cache_set("circuits", circuits)
-    return circuits
+
+    _cache_set("circuits", merged)
+    return merged
 
 # ─── Aruba API Endpoints ───────────────────────────────────────────────────────
 
@@ -712,6 +819,7 @@ async def create_circuit(circuit: CircuitCreate):
     doc = {"id": str(uuid.uuid4()), "last_checked": ts, "created_at": ts, **circuit.model_dump()}
     await db.circuits.insert_one(doc)
     doc.pop("_id", None)
+    _aruba_cache.pop("circuits", None)  # Invalidate cache so next request picks up new circuit
     return doc
 
 @api_router.put("/circuits/{circuit_id}")
@@ -720,6 +828,7 @@ async def update_circuit(circuit_id: str, data: CircuitCreate):
     result = await db.circuits.update_one({"id": circuit_id}, {"$set": update})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Circuit not found")
+    _aruba_cache.pop("circuits", None)  # Invalidate cache so edited bandwidth/provider shows immediately
     return await db.circuits.find_one({"id": circuit_id}, {"_id": 0})
 
 @api_router.delete("/circuits/{circuit_id}")
@@ -727,6 +836,7 @@ async def delete_circuit(circuit_id: str):
     result = await db.circuits.delete_one({"id": circuit_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Circuit not found")
+    _aruba_cache.pop("circuits", None)  # Invalidate cache
     return {"success": True}
 
 @api_router.get("/tickets")
@@ -765,7 +875,16 @@ async def delete_ticket(ticket_id: str):
 
 @api_router.get("/vendor-status")
 async def get_vendor_status():
-    tasks = [check_vendor_status(v) for v in VENDORS]
+    # Try Downdetector when credentials are configured
+    settings = await db.settings.find_one({"_id": "app_settings"})
+    dd_id     = (settings or {}).get("downdetector_client_id", "")
+    dd_secret = (settings or {}).get("downdetector_client_secret", "")
+
+    dd_token = None
+    if dd_id and dd_secret:
+        dd_token = await _dd_get_token(dd_id, dd_secret)
+
+    tasks = [check_vendor_status(v, dd_token) for v in VENDORS]
     results = await asyncio.gather(*tasks)
     return list(results)
 
@@ -802,7 +921,7 @@ async def get_sites():
 async def get_settings():
     s = await db.settings.find_one(
         {"_id": "app_settings"},
-        {"_id": 0, "email_password": 0, "wazuh_password": 0, "wazuh_indexer_password": 0}
+        {"_id": 0, "email_password": 0, "wazuh_password": 0, "wazuh_indexer_password": 0, "downdetector_client_secret": 0}
     )
     return s or {}
 
