@@ -31,6 +31,7 @@ DEFAULT_SETTINGS: dict = {
     "wazuh_enabled": False, "wazuh_url": "10.202.10.70", "wazuh_api_port": 55000,
     "wazuh_indexer_port": 9200, "wazuh_username": "", "wazuh_password": "",
     "wazuh_indexer_username": "", "wazuh_indexer_password": "",
+    "wug_url": "", "wug_username": "", "wug_password": "", "wug_poll_interval": 60,
     "downdetector_client_id": "", "downdetector_client_secret": "",
     "unifi_syslog_port": 5140, "unifi_syslog_enabled": True,
     "unifi_controller1_url": "", "unifi_controller1_username": "",
@@ -1099,6 +1100,33 @@ async def delete_ticket(ticket_id: str):
             _tickets_store.pop(i)
             return {"success": True}
     raise HTTPException(status_code=404, detail="Ticket not found")
+
+
+# ─── WUG (WhatsUp Gold) Topology ──────────────────────────────────
+# Stub endpoint — returns placeholder topology data.
+# Tomorrow: replace body with real WUG REST API calls using
+# GET /api/v1/device/-1/devices  and  GET /api/v1/networkmap/{id}/data
+
+@api_router.get("/wug/topology")
+async def wug_topology():
+    """
+    Returns network topology per location.
+    Currently returns a placeholder structure; WUG API integration pending.
+    Schema matches what the frontend LocationCard expects:
+      { locations: [ { id, name, devices: [ { id, name, type, parent_id, ip, status, alert } ] } ] }
+    """
+    settings = load_settings()
+    wug_url  = settings.get("wug_url", "")
+    wug_user = settings.get("wug_username", "")
+    wug_pass = settings.get("wug_password", "")
+
+    # ── When WUG credentials are available, call the real API here ──
+    # if wug_url and wug_user and wug_pass:
+    #     token = await _wug_get_token(wug_url, wug_user, wug_pass)
+    #     return await _wug_fetch_topology(wug_url, token)
+
+    # ── Placeholder — frontend falls back to its own mock if this returns empty ──
+    return {"locations": [], "source": "pending", "message": "WUG API not yet configured"}
 
 
 # ─── Vendor Status ─────────────────────────────────────────────────

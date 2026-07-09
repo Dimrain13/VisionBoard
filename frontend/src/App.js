@@ -10,6 +10,7 @@ import Tickets from "./pages/Tickets";
 import Settings from "./pages/Settings";
 import UniFiEvents from "./pages/UniFiEvents";
 import UniFiDevices from "./pages/UniFiDevices";
+import WUGTopology from "./pages/WUGDevices";
 import WazuhPage from "./pages/WazuhPage";
 import "./App.css";
 
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/tickets" element={<Tickets />} />
           <Route path="/unifi" element={<UniFiEvents />} />
           <Route path="/unifi-devices" element={<UniFiDevices />} />
+          <Route path="/wug-topology" element={<WUGTopology />} />
           <Route path="/wazuh" element={<WazuhPage />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>

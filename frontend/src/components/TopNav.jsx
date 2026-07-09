@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { format } from "date-fns";
 import {
-  Activity, Map, ShieldAlert, Network, Wifi, CheckSquare, Terminal, Settings,
+  Activity, Map, ShieldAlert, Network, Wifi, CheckSquare, Terminal, Settings, GitBranch,
   Clock, Pause, Play, RotateCw, Camera,
 } from "lucide-react";
 
@@ -14,6 +14,7 @@ const TABS = [
   { path: "/circuits",      label: "DIA CIRCUITS",   Icon: Wifi        },
   { path: "/unifi-devices", label: "UNIFI DEVICES",  Icon: Camera      },
   { path: "/tickets",       label: "TICKETS",        Icon: CheckSquare },
+  { path: "/wug-topology",   label: "WUG",            Icon: GitBranch   },
   { path: "/wazuh",         label: "WAZUH",          Icon: Terminal    },
   { path: "/settings",      label: "SETTINGS",       Icon: Settings    },
 ];

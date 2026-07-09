@@ -13,7 +13,7 @@ Create a dashboard in Python/React to display important IT information at a glan
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/          # Dashboard, NetworkMap, Alerts, ServiceStatus, UniFiDevices, Tickets, Wazuh, Settings
+│   │   ├── pages/          # Dashboard, NetworkMap, Alerts, ServiceStatus, UniFiDevices, Tickets, WUGDevices, Wazuh, Settings
 │   │   ├── components/     # MapEmbed.jsx, TopNav.jsx
 │   │   └── index.css       # JetBrains Mono global font
 │   └── tailwind.config.js
@@ -62,10 +62,22 @@ Create a dashboard in Python/React to display important IT information at a glan
 
 ### Vendor Status (ServiceStatus page)
 - 21 vendors across Security, Microsoft, AI, Cloud, Telecom, Other
-- Fixed Downdetector slugs: `teams` (Teams), `google-bard` (Gemini), `claude` (Anthropic), `microsoft-dynamics-365`
-- Fallback to public Statuspage.io APIs for: Cloudflare, OpenAI, Keeper, UniFi, CrowdStrike, Anthropic
-- HTTP follow_redirects=True + verify=False applied to all status checks
-- **DD token status badge** in UI showing: active/pending/not-configured + minutes to next refresh
+- **Source priority**: 1) Downdetector Enterprise API (if credentials set), 2) HTTP HEAD ping to vendor's own public endpoint
+- All 21 vendors show live status via HTTP ping even without DD credentials
+- DD token retries 3× (10s apart) before logging error; no Statuspage.io fallback
+- `source` field in API response: `"downdetector"` | `"http_check"` | `"none"`
+
+### WUG Network Topology (NEW — 2026-07-09)
+- New tab: **WUG** — circuit-board style hierarchical topology per location
+- 5 locations: Novi HQ, Remus, Mt. Pleasant, Constantine, Canton
+- Per-location SVG tree: gateway → core switch → access switches → APs
+- Type colors: Gateway=cyan, Core Switch=green, Switch=blue, AP=amber
+- Orthogonal elbow connectors with flowing data-pulse animation
+- Down device: red pulsing glow + DOWN label
+- Device Roster panel below topologies: all 27 devices with status/IP/location
+- **DEMO DATA ACTIVE** — WUG API not yet connected (backend stub at `/api/wug/topology`)
+- WUG credentials fields added to settings.yml: `wug_url`, `wug_username`, `wug_password`
+- Tomorrow: wire up real WUG REST API (`/api/v1/device/-1/devices`, `/api/v1/networkmap/{id}/data`)
 
 ### UniFi Devices Page
 - Auto-detect UniFi OS vs Legacy API
@@ -101,6 +113,7 @@ Create a dashboard in Python/React to display important IT information at a glan
 - `GET /api/alerts?acknowledged=false` — active alerts
 - `GET /api/vivantio/tickets` — live Vivantio tickets
 - `GET /api/vendor-status` — 21 vendor statuses + DD token state
+- `GET /api/wug/topology` — WUG device topology per location (stub — returns empty until API connected)
 - `GET /api/unifi/devices[?demo=true]` — UniFi devices from controller(s)
 - `GET /api/aruba/mesh` — SD-WAN tunnel topology
 - `GET/PUT /api/settings` — read/write settings.yml
