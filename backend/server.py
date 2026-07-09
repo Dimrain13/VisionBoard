@@ -525,6 +525,90 @@ async def background_unifi_warmer():
 
 
 # ─── Seed Data ────────────────────────────────────────────────────
+# ─── WAN Circuit Ping Check ───────────────────────────────────────────────────
+# Pings each circuit's WAN IP every 60s.
+# Only overrides YAML status once at least ONE successful ping has been seen
+# (meaning we're on the correct network with real IPs — i.e. the Raspberry Pi).
+# In cloud preview (with placeholder IPs) pings always fail, so YAML status is
+# left untouched.
+
+_circuit_ping_cache: dict = {}  # site → {status, ever_up, consecutive_failures, checked_at}
+
+
+async def ping_host(ip: str) -> bool:
+    """Single ICMP ping with a 2-second timeout. Returns True if reachable."""
+    if not ip:
+        return False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ping", "-c", "1", "-W", "2", ip,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+async def _ping_and_cache(site: str, ip: str):
+    reachable  = await ping_host(ip)
+    existing   = _circuit_ping_cache.get(site, {"ever_up": False, "consecutive_failures": 0, "status": "unknown"})
+    ever_up    = existing["ever_up"] or reachable
+    failures   = 0 if reachable else existing["consecutive_failures"] + 1
+
+    if reachable:
+        status = "up"
+    elif ever_up and failures >= 2:
+        # Only declare DOWN after 2 consecutive misses on a network where pings work
+        status = "down"
+    else:
+        status = existing["status"]  # keep previous / unknown
+
+    _circuit_ping_cache[site] = {
+        "status": status, "ever_up": ever_up,
+        "consecutive_failures": failures,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if status == "down":
+        logger.warning(f"WAN PING DOWN: {site} ({ip}) — {failures} consecutive failures")
+    elif reachable and existing.get("status") == "down":
+        logger.info(f"WAN PING RECOVERED: {site} ({ip})")
+
+
+async def background_circuit_pinger():
+    """Ping every circuit's WAN IP every 60s and cache live reachability."""
+    await asyncio.sleep(20)
+    while True:
+        try:
+            circuits = load_circuits()
+            tasks = [
+                _ping_and_cache(c["site"], c.get("ip_address") or c.get("ip", ""))
+                for c in circuits if c.get("ip_address") or c.get("ip")
+            ]
+            if tasks:
+                await asyncio.gather(*tasks)
+        except Exception as e:
+            logger.warning(f"Circuit pinger error: {e}")
+        await asyncio.sleep(60)
+
+
+def apply_ping_overlay(circuits: list) -> list:
+    """Overlay live ping status on circuit data. Only active when on a network
+    where at least one circuit has ever been successfully pinged."""
+    if not _circuit_ping_cache:
+        return circuits
+    result = []
+    for c in circuits:
+        ping = _circuit_ping_cache.get(c["site"])
+        # Only override if we've confirmed this environment can reach circuit IPs
+        if ping and ping["ever_up"]:
+            result.append({**c, "status": ping["status"], "ping_checked_at": ping["checked_at"]})
+        else:
+            result.append(c)
+    return result
+
+
 def seed_demo_data():
     """Seed in-memory stores with demo data on startup."""
     now = datetime.now(timezone.utc)
@@ -635,11 +719,12 @@ def parse_wug_email(subject: str, body: str) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed_demo_data()
-    email_task    = asyncio.create_task(background_email_poller())
-    aruba_task    = asyncio.create_task(background_aruba_warmer())
-    vivantio_task = asyncio.create_task(background_vivantio_warmer())
-    dd_task       = asyncio.create_task(background_dd_token_refresher())
-    unifi_task    = asyncio.create_task(background_unifi_warmer())
+    email_task   = asyncio.create_task(background_email_poller())
+    aruba_task   = asyncio.create_task(background_aruba_warmer())
+    vivantio_task= asyncio.create_task(background_vivantio_warmer())
+    dd_task      = asyncio.create_task(background_dd_token_refresher())
+    unifi_task   = asyncio.create_task(background_unifi_warmer())
+    ping_task    = asyncio.create_task(background_circuit_pinger())
 
     syslog_port = int(load_settings().get("unifi_syslog_port", 5140))
     transport = None
@@ -655,11 +740,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task):
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task):
         task.cancel()
     if transport:
         transport.close()
-    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task):
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -934,8 +1019,8 @@ async def aruba_mesh():
 async def get_circuits():
     live = await get_aruba_circuits_live()
     if live is not None:
-        return live
-    return sorted(load_circuits(), key=lambda c: c.get("site", ""))
+        return apply_ping_overlay(live)
+    return apply_ping_overlay(sorted(load_circuits(), key=lambda c: c.get("site", "")))
 
 @api_router.post("/circuits")
 async def create_circuit(circuit: CircuitCreate):

@@ -23,16 +23,17 @@ const STATUS_COLOR = {
   unknown:  "#3A3A48",
 };
 
-// Site lon/lat. Novi is the WAN hub (HQ).
+// Site lon/lat. Novi is the WAN hub (HQ). Azure = Chicago egress.
 const SITES = {
-  "Novi":             { coords: [-83.476, 42.481], hub: true },
-  "Remus":            { coords: [-85.147, 43.742] },
-  "Mt. Pleasant":     { coords: [-84.774, 43.603] },
-  "Ovid":             { coords: [-84.370, 43.009] },
-  "Constantine":      { coords: [-85.667, 41.841] },
-  "Canton":           { coords: [-81.378, 40.799] },
-  "Canton Warehouse": { coords: [-81.220, 41.020] },
-  "Middlebury":       { coords: [-85.960, 41.630] },
+  "Novi":             { coords: [-83.476, 42.481], hub: true  },
+  "Remus":            { coords: [-85.147, 43.742]             },
+  "Mt. Pleasant":     { coords: [-84.774, 43.603]             },
+  "Ovid":             { coords: [-84.370, 43.009]             },
+  "Constantine":      { coords: [-85.667, 41.841]             },
+  "Canton":           { coords: [-81.378, 40.799]             },
+  "Canton Warehouse": { coords: [-81.220, 41.020]             },
+  "Middlebury":       { coords: [-85.960, 41.630]             },
+  "Azure":            { coords: [-87.63,  41.88 ], cloud: true},
 };
 
 function normalize(name) {
@@ -64,14 +65,20 @@ export default function MapEmbed({ sites = [] }) {
   const siteStatus = {};
   sites.forEach(s => { siteStatus[normalize(s.name)] = s.status || "unknown"; });
 
-  const hubCoords = SITES["Novi"].coords;
+  const hubCoords   = SITES["Novi"].coords;
+  const azureCoords = SITES["Azure"].coords;
 
   const wanLines = Object.entries(SITES)
-    .filter(([, s]) => !s.hub)
+    .filter(([, s]) => !s.hub && !s.cloud)
     .map(([name, { coords }], i) => ({
       name, coords, i,
       status: circuitStatus[name] || siteStatus[name] || "unknown",
     }));
+
+  // Worst overall circuit status drives the Novi → Azure line colour
+  const overallDown = wanLines.some(l => l.status === "down");
+  const overallDeg  = !overallDown && wanLines.some(l => l.status === "degraded");
+  const cloudStatus = overallDown ? "down" : overallDeg ? "degraded" : "up";
 
   return (
     <ComposableMap
@@ -140,8 +147,42 @@ export default function MapEmbed({ sites = [] }) {
         );
       })}
 
+      {/* Novi → Azure cloud line (represents internet egress health) */}
+      {(() => {
+        const color = STATUS_COLOR[cloudStatus] || STATUS_COLOR.unknown;
+        const isUp  = cloudStatus === "up";
+        const isDeg = cloudStatus === "degraded";
+        const isDown= cloudStatus === "down";
+        return (
+          <g key="wan-azure">
+            <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={isDown ? 1.8 : 0.8} opacity={isDown ? 0.28 : 0.13} strokeDasharray="2 6" />
+            {isUp  && <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.2} strokeDasharray="5 22" style={{ animation:"pkt-up 2.2s 0s linear infinite", opacity:.65 }} />}
+            {isDeg && <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.0} strokeDasharray="3 12" style={{ animation:"pkt-deg 3.2s 0s linear infinite", opacity:.58 }} />}
+            {isDown&& <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.8} style={{ animation:"wan-down 1.8s 0s ease-in-out infinite", opacity:.65 }} />}
+          </g>
+        );
+      })()}
+
       {/* Site nodes */}
-      {Object.entries(SITES).map(([name, { coords, hub }]) => {
+      {Object.entries(SITES).map(([name, { coords, hub, cloud }]) => {
+        if (cloud) {
+          return (
+            <Marker key={name} coordinates={coords}>
+              <g>
+                <rect x={-24} y={-13} width={48} height={26}
+                  fill="#0B0B12" stroke="#00E5FF" strokeWidth={1.2} rx={2} />
+                <text y={-2} textAnchor="middle" style={{
+                  fontFamily: "'JetBrains Mono', monospace", fontSize: 6.5,
+                  fill: "#00E5FF", letterSpacing: "0.1em", fontWeight: 700,
+                }}>AZURE</text>
+                <text y={8} textAnchor="middle" style={{
+                  fontFamily: "'JetBrains Mono', monospace", fontSize: 5.5,
+                  fill: "#00E5FF", letterSpacing: "0.08em", opacity: 0.6,
+                }}>CHICAGO</text>
+              </g>
+            </Marker>
+          );
+        }
         const key    = normalize(name);
         const status = hub ? "up" : (circuitStatus[key] || siteStatus[key] || "unknown");
         const color  = STATUS_COLOR[status] || STATUS_COLOR.unknown;
