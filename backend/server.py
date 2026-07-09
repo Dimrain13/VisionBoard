@@ -388,7 +388,8 @@ async def poll_email_for_alerts(settings: dict):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await seed_demo_data()
-    email_task = asyncio.create_task(background_email_poller())
+    email_task  = asyncio.create_task(background_email_poller())
+    aruba_task  = asyncio.create_task(background_aruba_warmer())
 
     # Start UniFi syslog UDP listener
     syslog_port = int(os.environ.get("UNIFI_SYSLOG_PORT", "5140"))
@@ -406,10 +407,15 @@ async def lifespan(app: FastAPI):
     yield
 
     email_task.cancel()
+    aruba_task.cancel()
     if transport:
         transport.close()
     try:
         await email_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await aruba_task
     except asyncio.CancelledError:
         pass
     mongo_client.close()
@@ -518,6 +524,19 @@ SITE_NAME_MAP = {
 def normalize_site(name: str) -> str:
     return SITE_NAME_MAP.get(name.lower(), name)
 
+# ─── In-memory cache (survives hot-reload, resets on restart) ─────────────────
+_aruba_cache: dict = {}
+ARUBA_CACHE_TTL = 300  # 5 minutes — Aruba topology changes slowly
+
+def _cache_get(key: str):
+    entry = _aruba_cache.get(key)
+    if entry and (time.time() - entry["ts"]) < ARUBA_CACHE_TTL:
+        return entry["data"]
+    return None
+
+def _cache_set(key: str, data):
+    _aruba_cache[key] = {"data": data, "ts": time.time()}
+
 async def aruba_request(method: str, endpoint: str, body=None):
     cfg = await db.settings.find_one({"_id": "app_settings"})
     base = (cfg.get("aruba_api_url") or "").rstrip("/")
@@ -537,7 +556,51 @@ async def aruba_request(method: str, endpoint: str, body=None):
         logger.warning(f"Aruba request {endpoint} failed: {e}")
         return None
 
+async def background_aruba_warmer():
+    """Warm Aruba caches on startup and refresh every 5 minutes."""
+    await asyncio.sleep(5)  # Let the server fully start first
+    while True:
+        try:
+            await get_aruba_circuits_live()
+            # Warm the mesh cache too (inline logic to avoid circular import)
+            apps = await aruba_request("GET", "/appliance")
+            if apps:
+                ne_to_site = {a["id"]: normalize_site(a["site"]) for a in apps}
+                id_to_ne   = {a["applianceId"]: a["id"] for a in apps}
+                nePks      = [a["id"] for a in apps]
+                tunnels    = await aruba_request("POST", "/tunnels/physical/state", {"nePks": nePks})
+                if tunnels:
+                    links = {}
+                    for ne, data in tunnels.items():
+                        src = ne_to_site.get(ne)
+                        if not src:
+                            continue
+                        for t in data.get("allTunnelState", {}).values():
+                            remote_ne = id_to_ne.get(t.get("remote_id"))
+                            if not remote_ne:
+                                continue
+                            dst = ne_to_site.get(remote_ne)
+                            if not dst or src == dst:
+                                continue
+                            pair   = tuple(sorted([src, dst]))
+                            oper   = t.get("oper", "")
+                            status = "up" if "Up" in oper else ("down" if "Down" in oper else "degraded")
+                            cur    = links.get(pair, {}).get("status", "up")
+                            if status == "down" or (status == "degraded" and cur == "up"):
+                                links[pair] = {"src": pair[0], "dst": pair[1], "status": status}
+                            elif pair not in links:
+                                links[pair] = {"src": pair[0], "dst": pair[1], "status": status}
+                    _cache_set("mesh", list(links.values()))
+                    logger.info(f"Aruba cache refreshed: {len(links)} mesh links")
+        except Exception as e:
+            logger.warning(f"Aruba background warmer error: {e}")
+        await asyncio.sleep(300)  # refresh every 5 minutes
+
+
 async def get_aruba_circuits_live():
+    cached = _cache_get("circuits")
+    if cached is not None:
+        return cached
     apps = await aruba_request("GET", "/appliance")
     if not apps:
         return None
@@ -558,6 +621,7 @@ async def get_aruba_circuits_live():
             "hostname":      a.get("hostName", ""),
             "last_checked":  datetime.now(timezone.utc).isoformat(),
         })
+    _cache_set("circuits", circuits)
     return circuits
 
 # ─── Aruba API Endpoints ───────────────────────────────────────────────────────
@@ -574,6 +638,10 @@ async def aruba_status():
 
 @api_router.get("/aruba/mesh")
 async def aruba_mesh():
+    cached = _cache_get("mesh")
+    if cached is not None:
+        return cached
+
     apps = await aruba_request("GET", "/appliance")
     if not apps:
         return []
@@ -606,7 +674,9 @@ async def aruba_mesh():
             elif pair not in links:
                 links[pair] = {"src": pair[0], "dst": pair[1], "status": status}
 
-    return list(links.values())
+    result = list(links.values())
+    _cache_set("mesh", result)
+    return result
 
 @api_router.get("/circuits")
 async def get_circuits():

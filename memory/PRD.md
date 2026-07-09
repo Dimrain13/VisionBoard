@@ -1,107 +1,129 @@
 # IT Command Center — PRD
 
 ## Original Problem Statement
-Create a dashboard in Python/React to display important IT information at a glance for a NOC team, running on a Raspberry Pi (1920x1080). Primarily a READ-ONLY display pulling from external APIs. Features: WUG alerting (via emails), DIA circuits from HP Aruba/Orchestrator, ticket info from Vivantio, vendor health checks, network map with 8 locations, UniFi/Wazuh SIEM alerts.
-
-## Tech Stack
-- Frontend: React + TailwindCSS + Shadcn/UI + Lucide React
-- Backend: FastAPI + MongoDB (settings only — minimal writes)
-- Design: "Cyberpunk NOC" — JetBrains Mono, zero border-radius, corner crosshairs, cyan (#00E5FF) accents, top-tab navigation
-- Color Palette: Critical=#FF2A2A, Warning=#FFB014, OK=#00FF66, Info=#00E5FF, BG=#030305
-
-## 8 Site Locations
-Remus MI, Ovid MI, Mt. Pleasant MI, Constantine MI, Novi MI, Canton OH (Plant), Canton OH (Warehouse), Middlebury IN
+Create a dashboard in Python/React to display important information for IT at a glance.
+- Wazuh SIEM integration (consolidating UniFi, WUG, and HP alerts)
+- DIA Circuits overview
+- Ticket information (Vivantio)
+- Service status
+- Run on wall-mounted Raspberry Pi (1920×1080) in kiosk mode
+- Top tab navigation (no sidebar) to maximize horizontal width
+- Live mesh map topology for locations connected via HP Aruba EdgeConnect
 
 ## Architecture
+
 ```
 /app/
 ├── backend/
-│   ├── server.py          # FastAPI + Wazuh service + all API routes
+│   ├── server.py              # FastAPI app (Wazuh, Aruba, UDP syslog, MongoDB)
 │   ├── requirements.txt
 │   └── .env
 ├── frontend/
 │   ├── src/
-│   │   ├── App.js         # Routes
-│   │   ├── App.css        # Cyberpunk NOC CSS design system
-│   │   ├── index.css      # Base styles — JetBrains Mono, #030305 bg
+│   │   ├── App.js             # Routes
+│   │   ├── App.css / index.css  # Cyberpunk NOC design system
 │   │   ├── components/
-│   │   │   ├── Layout.jsx    # flex-col h-screen, TopNav + main + grid overlay
-│   │   │   ├── TopNav.jsx    # Top tab bar with icons, clock, NODE ONLINE indicator
-│   │   │   ├── Sidebar.jsx   # UNUSED (kept for reference)
-│   │   │   └── Header.jsx    # UNUSED
-│   │   └── pages/
-│   │       ├── Dashboard.jsx
-│   │       ├── NetworkMap.jsx
-│   │       ├── Alerts.jsx
-│   │       ├── ServiceStatus.jsx
-│   │       ├── DIACircuits.jsx
-│   │       ├── Tickets.jsx
-│   │       ├── WazuhPage.jsx    # Wazuh SIEM — live alerts + agents
-│   │       ├── UniFiEvents.jsx  # UDP syslog (accessible at /unifi)
-│   │       └── Settings.jsx
-├── memory/
-│   └── PRD.md
-└── design_guidelines.json
+│   │   │   ├── Layout.jsx     # Kiosk rotation logic
+│   │   │   └── TopNav.jsx     # Nav with kiosk pause/timer
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── NetworkMap.jsx # Geographic mesh map (react-simple-maps)
+│   │   │   ├── Alerts.jsx
+│   │   │   ├── VendorStatus.jsx
+│   │   │   ├── DiaCircuits.jsx
+│   │   │   ├── Tickets.jsx
+│   │   │   ├── Wazuh.jsx
+│   │   │   └── Settings.jsx
+│   │   └── utils/api.js
+└── memory/
+    ├── PRD.md
+    └── test_credentials.md
 ```
 
-## Wazuh Connection
-- Server: 10.202.10.70
-- REST API: port 55000 (JWT auth) → agents
-- Indexer: port 9200 (Basic Auth) → wazuh-alerts-* index
-- alert.rule.groups[] contains source tags (UniFi, WUG, HP, etc.)
-- SSL verify=False (self-signed cert)
-- NOTE: Always UNREACHABLE in preview env — connects on Pi deployment
+## Key Tech Stack
+- React (CRA), Tailwind CSS, react-simple-maps (geographic SVG maps)
+- FastAPI, MongoDB, httpx (async HTTP)
+- HPE Aruba EdgeConnect Orchestrator API
+- Wazuh SIEM API (LAN-only, expected to fail in preview)
+
+## DB Schema (MongoDB)
+- settings: { wazuh_enabled, wazuh_url, wazuh_username, wazuh_password,
+              kiosk_enabled, kiosk_interval, aruba_api_url, aruba_api_key }
+
+---
 
 ## What's Been Implemented
 
-### Session 1 — Foundation
-- React + FastAPI scaffolding, routing, layout, mocked data
+### Cyberpunk NOC UI Redesign (Gemini 3.1 Pro)
+- Full CSS overhaul: dark theme, neon glows, sharp edges, JetBrains Mono font
+- `/app/design_guidelines.json` codifies the design system
 
-### Session 2 — Modern UI + UniFi Syslog
-- "Precision Command Center" design across all pages
-- UniFi UDP syslog receiver (port 5140)
+### Kiosk Auto-Rotation Mode ✅
+- Cycles pages every N seconds (configurable in Settings)
+- TopNav shows rotation timer + pause button
+- Layout.jsx manages the interval logic
 
-### Session 3 — Wazuh SIEM Integration
-- Full Wazuh backend service + API endpoints
-- WazuhPage.jsx with terminal alert feed, filters, agent grid
-- Settings WAZUH SIEM section (IP 10.202.10.70 pre-filled)
+### HPE Aruba EdgeConnect Integration ✅
+- Settings page allows entering Aruba Orchestrator URL + API key
+- Backend `/api/aruba/mesh` fetches live SD-WAN mesh links
+- Backend `/api/aruba/status` fetches alarm summary
+- In-memory cache (5-min TTL) with background warmer at startup
+- Cache warms within 9s of server start via `background_aruba_warmer()`
 
-### Session 4 — Top Tab Navigation
-- Replaced left sidebar with TopNav top tab bar
-- Full 1920px width now used for content
-- Layout.jsx simplified: TopNav + children
+### Geographic Network Map ✅ (2026-07-09)
+- Replaced hand-drawn SVG polygon with `react-simple-maps` using US states GeoJSON
+- Shows accurate Michigan mitten outline + Ohio + Indiana + context states
+- All 9 nodes (8 physical sites + Azure Cloud) positioned at real lat/lon
+- Azure Cloud placed east towards Lake Huron at [-79.4, 44.5]
+- 36 live SD-WAN mesh tunnel lines rendered, colored by status
+- Site detail panel shows tunnel list for selected node
+- Cache prevents Aruba API slow-start on kiosk page rotation
 
-### Session 5 — Cyberpunk NOC Redesign (2026-02-07)
-- Complete visual overhaul: "Cyberpunk NOC" theme
-- New color palette: Critical=#FF2A2A, Warning=#FFB014, OK=#00FF66, Info=#00E5FF
-- Background: #030305 (deep black), Surface: #0B0B0F
-- JetBrains Mono font everywhere (removed Plus Jakarta Sans / Inter)
-- Cards with corner crosshair accents via CSS pseudo-elements
-- Subtle cyan grid overlay in Layout
-- Lucide icons added to TopNav tabs
-- Glowing status dots for online/degraded/offline states
-- All pages updated with new color constants
-- 100% test pass rate (testing agent verified all 8 pages)
+---
 
-### Session 6 — Kiosk Auto-Rotation (2026-02-07)
-- Auto-rotation: Dashboard → Wazuh → Circuits → Alerts cycling on configurable interval
-- TopNav: KIOSK label + countdown (e.g. "29s") + PAUSE/RESUME button + cyan progress bar at bottom of nav
-- Settings: KIOSK AUTO-ROTATION section at top — enable/disable toggle + interval input (10–300s, default 30s)
-- Backend: kiosk_enabled (bool) + kiosk_interval (int) added to SettingsUpdate model + migration
-- Implementation: stable single setInterval in Layout.jsx using refs for all dynamic values (no re-creation on state change)
-- 100% test pass rate (11 tests: toggle, countdown, progress bar, pause/resume, actual rotation /dashboard→/wazuh)
+## Prioritized Backlog
 
-## P0 — Next Priority (needs user credentials)
-- [ ] WUG email IMAP (mail server credentials needed in Settings)
-- [ ] Vivantio live tickets (API URL + key needed)
-- [ ] HP Aruba live DIA circuits (Orchestrator URL + key needed)
+### P0 — Completed
+- [x] Cyberpunk NOC UI redesign
+- [x] Kiosk auto-rotation mode
+- [x] Aruba SD-WAN backend integration
+- [x] Geographic mesh map (proper state outlines)
 
-## P1 — Enhancements
-- [ ] Kiosk auto-rotation: Dashboard → Wazuh → Circuits → Alerts cycling every 30s
-- [ ] Replace MongoDB with flat settings.yml (simpler Pi deploy, no DB dependency)
-- [ ] Real vendor status checks (authenticated status pages)
+### P1 — Next Sprint
+- [ ] Migrate settings from MongoDB to flat `settings.yml` file
+  - Removes MongoDB dependency for Raspberry Pi deployment
+  - Simplifies setup: just edit a YAML file
 
-## P2 — Future
-- [ ] WebSocket push for Wazuh alerts (currently 30s polling)
-- [ ] Raspberry Pi deployment: start.sh install script
-- [ ] Dashboard KPI wired to Wazuh summary endpoint
+### P2
+- [ ] Raspberry Pi deployment script (`start.sh` / `install.sh`)
+- [ ] Vivantio ticketing integration (waiting on user-provided API keys)
+
+### P3 — Backlog
+- [ ] Dashboard KPIs wired to Wazuh summary endpoint
+- [ ] DIA Circuits live data
+- [ ] Alerts page live data from Wazuh
+
+---
+
+## Key API Endpoints
+- GET  `/api/settings`          — load settings
+- POST `/api/settings`          — save settings
+- GET  `/api/sites`             — 8 sites + live Aruba circuit status (cached)
+- GET  `/api/aruba/mesh`        — 36 SD-WAN mesh links (cached 5 min)
+- GET  `/api/aruba/status`      — Aruba alarm summary
+- GET  `/api/wazuh/status`      — Wazuh SIEM status (LAN-only)
+- GET  `/api/circuits`          — DIA circuits data
+
+---
+
+## Important Notes for Next Agent
+- **Wazuh**: Connection to `10.202.10.70` will ALWAYS fail in preview (LAN IP).
+  This is expected and should NOT be treated as a bug.
+- **Aruba Cache**: The `background_aruba_warmer()` task warms both `circuits`
+  and `mesh` caches within 9s of server startup. Cache TTL = 5 minutes.
+  Do NOT reduce the TTL without understanding the Aruba API response times.
+- **MongoDB migration**: Settings are still stored in MongoDB. The P1 task is
+  to migrate to `settings.yml`. Do NOT start this until explicitly instructed.
+- **react-simple-maps**: v3.0.0 is installed. The GeoJSON URL is
+  `https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json`
+  Michigan FIPS=26, Ohio=39, Indiana=18.
