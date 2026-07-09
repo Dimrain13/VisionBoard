@@ -348,7 +348,8 @@ async def _dd_get_token(client_id: str, client_secret: str, force: bool = False)
     return None
 
 async def background_dd_token_refresher():
-    """Proactively generate a fresh Downdetector Bearer token every 45 minutes."""
+    """Proactively refresh the Downdetector Bearer token every 45 minutes.
+    On failure, retries up to 3 times (10 s apart) before logging an error."""
     await asyncio.sleep(12)
     while True:
         try:
@@ -356,15 +357,20 @@ async def background_dd_token_refresher():
             dd_id     = settings.get("downdetector_client_id", "")
             dd_secret = settings.get("downdetector_client_secret", "")
             if dd_id and dd_secret:
-                token = await _dd_get_token(dd_id, dd_secret, force=True)
-                if token:
-                    logger.info("Downdetector token refreshed by background task")
-                else:
-                    logger.warning("Downdetector background token refresh failed — will retry in 45 min")
+                token = None
+                for attempt in range(1, 4):
+                    token = await _dd_get_token(dd_id, dd_secret, force=True)
+                    if token:
+                        logger.info("Downdetector token refreshed (attempt %d)", attempt)
+                        break
+                    if attempt < 3:
+                        await asyncio.sleep(10)
+                if not token:
+                    logger.error("Downdetector token refresh failed after 3 attempts — will retry in 45 min")
             else:
                 logger.debug("Downdetector credentials not configured — skipping token refresh")
         except Exception as e:
-            logger.warning(f"Downdetector token refresher error: {e}")
+            logger.error(f"Downdetector token refresher unexpected error: {e}")
         await asyncio.sleep(2700)  # 45 minutes
 
 
@@ -394,7 +400,7 @@ async def check_vendor_status(vendor: dict, dd_token: Optional[str]) -> dict:
     source      = "none"
     now_iso     = datetime.now(timezone.utc).isoformat()
 
-    # 1. Try Downdetector Enterprise API (highest fidelity — crowd-sourced realtime)
+    # Downdetector Enterprise API — only source of truth
     if dd_token and vendor.get("dd_slug"):
         try:
             company_id = await _dd_get_company_id(vendor_id, vendor["dd_slug"], dd_token)
@@ -408,25 +414,8 @@ async def check_vendor_status(vendor: dict, dd_token: Optional[str]) -> dict:
                         dd_status = r.json().get("status", "")
                         status = {"success": "operational", "warning": "minor_outage", "danger": "major_outage"}.get(dd_status, "unknown")
                         source = "downdetector"
-                        return {**vendor, "status": status, "source": source, "last_checked": now_iso}
         except Exception as e:
             logger.debug(f"DD check failed for {vendor_id}: {e}")
-
-    # 2. Fall back to public Statuspage.io JSON endpoint
-    if vendor.get("status_url"):
-        try:
-            async with httpx.AsyncClient(timeout=7, verify=False, follow_redirects=True) as c:
-                r = await c.get(vendor["status_url"])
-                if r.status_code == 200:
-                    body = r.json()
-                    ind = body.get("status", {}).get("indicator", "unknown")
-                    status = {
-                        "none": "operational", "minor": "minor_outage",
-                        "major": "major_outage", "critical": "major_outage"
-                    }.get(ind, "unknown")
-                    source = "statuspage"
-        except Exception as e:
-            logger.debug(f"Statuspage check failed for {vendor_id}: {e}")
 
     return {**vendor, "status": status, "source": source, "last_checked": now_iso}
 
