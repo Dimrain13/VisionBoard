@@ -31,19 +31,12 @@ const SITES = {
 };
 
 // Static mesh fallback used when Aruba API returns no tunnel data.
-// Mirrors the regional SD-WAN topology.
-const MESH_LINKS = [
-  { src: "Remus",        dst: "Mt. Pleasant",    status: "up" },
-  { src: "Mt. Pleasant", dst: "Ovid",            status: "up" },
-  { src: "Remus",        dst: "Novi",            status: "up" },
-  { src: "Ovid",         dst: "Novi",            status: "up" },
-  { src: "Constantine",  dst: "Middlebury",      status: "up" },
-  { src: "Constantine",  dst: "Novi",            status: "up" },
-  { src: "Middlebury",   dst: "Novi",            status: "up" },
-  { src: "Canton",       dst: "Canton Warehouse",status: "up" },
-  { src: "Canton",       dst: "Novi",            status: "up" },
-  { src: "Novi",         dst: "Azure",           status: "up" },
-];
+// Full mesh: every site connected to every other site.
+const SITE_KEYS = Object.keys(SITES);
+const MESH_LINKS = [];
+for (let i = 0; i < SITE_KEYS.length; i++)
+  for (let j = i + 1; j < SITE_KEYS.length; j++)
+    MESH_LINKS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j], status: "up" });
 
 const STATUS_COLOR = {
   up:      "#00FF66",
@@ -182,32 +175,41 @@ export default function NetworkMap() {
                   from { stroke-dashoffset: 0; }
                   to   { stroke-dashoffset: -24; }
                 }
+                @keyframes wan-down {
+                  0%,100% { opacity: .4; }
+                  50%     { opacity: .85; }
+                }
               `}</style>
             </defs>
 
-            {/* Tunnel lines — green unless WAN is DOWN */}
+            {/* Full mesh lines — green unless either endpoint WAN is DOWN */}
             {effectiveLinks.map((link, i) => {
               const src = SITES[link.src]?.coords;
               const dst = SITES[link.dst]?.coords;
               if (!src || !dst) return null;
               const isDown   = link.status === "down";
               const color    = isDown ? "#FF2A2A" : "#00FF66";
-              const duration = 1.6 + (i % 9) * 0.18;
-              const delay    = (i % 7) * 0.22;
+              const backbone = link.src === "Novi" || link.dst === "Novi" ||
+                               link.src === "Azure" || link.dst === "Azure";
+              const flowW    = backbone ? 1.1 : 0.7;
+              const dash     = "4 20";  // total 24 — matches dashoffset delta for perfect loop
+              const opFlow   = backbone ? 0.70 : 0.40;
+              const duration = 2.4;     // uniform — no per-line variation
               return (
                 <g key={i}>
                   <Line from={src} to={dst} stroke={color}
-                    strokeWidth={isDown ? 1.2 : 0.6}
-                    strokeOpacity={isDown ? 0.55 : 0.12}
-                    strokeLinecap="round" />
+                    strokeWidth={isDown ? flowW * 2 : flowW * 0.5}
+                    strokeOpacity={isDown ? 0.22 : 0.09} strokeLinecap="round" />
                   {!isDown && (
                     <Line from={src} to={dst} stroke={color}
-                      strokeWidth={1.0} strokeOpacity={0.42}
-                      strokeDasharray="4 20" strokeLinecap="round"
-                      style={{
-                        animation: `packet-flow ${duration}s linear infinite`,
-                        animationDelay: `${delay}s`,
-                      }} />
+                      strokeWidth={flowW} strokeOpacity={opFlow}
+                      strokeDasharray={dash} strokeLinecap="round"
+                      style={{ animation:`packet-flow ${duration}s linear infinite` }} />
+                  )}
+                  {isDown && (
+                    <Line from={src} to={dst} stroke={color} strokeWidth={flowW * 2.5}
+                      strokeOpacity={0.6} strokeLinecap="round"
+                      style={{ animation:`wan-down 1.8s ease-in-out infinite` }} />
                   )}
                 </g>
               );
