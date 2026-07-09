@@ -36,6 +36,19 @@ const SITES = {
   "Azure":            { coords: [-87.63,  41.88 ], cloud: true},
 };
 
+// Static SD-WAN mesh: regional site-to-site tunnels shown when Aruba data unavailable.
+// Lines go red if either endpoint's WAN circuit is down.
+const MESH_LINKS = [
+  { src: "Remus",        dst: "Mt. Pleasant"    },
+  { src: "Mt. Pleasant", dst: "Ovid"            },
+  { src: "Remus",        dst: "Novi"            },
+  { src: "Constantine",  dst: "Middlebury"      },
+  { src: "Constantine",  dst: "Novi"            },
+  { src: "Canton",       dst: "Canton Warehouse"},
+  { src: "Canton",       dst: "Novi"            },
+  { src: "Middlebury",   dst: "Novi"            },
+];
+
 function normalize(name) {
   return (name || "").replace(/\s+plant$/i, "").trim();
 }
@@ -112,6 +125,36 @@ export default function MapEmbed({ sites = [] }) {
             ))
         }
       </Geographies>
+
+      {/* Mesh links: site-to-site SD-WAN tunnels (thinner, behind hub lines) */}
+      {MESH_LINKS.map(({ src, dst }, i) => {
+        const srcCoords = SITES[src]?.coords;
+        const dstCoords = SITES[dst]?.coords;
+        if (!srcCoords || !dstCoords) return null;
+        const srcDown = circuitStatus[src] === "down" || siteStatus[src] === "offline";
+        const dstDown = circuitStatus[dst] === "down" || siteStatus[dst] === "offline";
+        const isDown  = srcDown || dstDown;
+        const color   = isDown ? "#FF2A2A" : "#00FF66";
+        const dur     = 2.2 + (i % 6) * 0.25;
+        const del     = (i % 8) * 0.3;
+        return (
+          <g key={`mesh-${src}-${dst}`}>
+            <Line from={srcCoords} to={dstCoords}
+              stroke={color} strokeWidth={isDown ? 1.2 : 0.5}
+              opacity={isDown ? 0.22 : 0.10} />
+            {!isDown && (
+              <Line from={srcCoords} to={dstCoords}
+                stroke={color} strokeWidth={0.9} strokeDasharray="3 22"
+                style={{ animation:`pkt-up ${dur}s ${del}s linear infinite`, opacity:.55 }} />
+            )}
+            {isDown && (
+              <Line from={srcCoords} to={dstCoords}
+                stroke={color} strokeWidth={1.4}
+                style={{ animation:`wan-down 2.2s ${del}s ease-in-out infinite`, opacity:.55 }} />
+            )}
+          </g>
+        );
+      })}
 
       {/* WAN lines: Novi → each site — green unless WAN is DOWN */}
       {wanLines.map(({ name, coords, status, i }) => {

@@ -25,11 +25,25 @@ const SITES = {
   "Constantine":      { coords: [-85.667, 41.841] },
   "Novi":             { coords: [-83.476, 42.481] },
   "Canton":           { coords: [-81.378, 40.799] },
-  "Canton Warehouse": { coords: [-81.220, 41.020] }, // offset NW for readability
-  "Middlebury":       { coords: [-85.960, 41.630] }, // offset slightly west to separate from Constantine
-  // Azure Cloud — Microsoft Azure Central US region, hosted in Chicago, IL
+  "Canton Warehouse": { coords: [-81.220, 41.020] },
+  "Middlebury":       { coords: [-85.960, 41.630] },
   "Azure":            { coords: [-87.63,  41.88 ] },
 };
+
+// Static mesh fallback used when Aruba API returns no tunnel data.
+// Mirrors the regional SD-WAN topology.
+const MESH_LINKS = [
+  { src: "Remus",        dst: "Mt. Pleasant",    status: "up" },
+  { src: "Mt. Pleasant", dst: "Ovid",            status: "up" },
+  { src: "Remus",        dst: "Novi",            status: "up" },
+  { src: "Ovid",         dst: "Novi",            status: "up" },
+  { src: "Constantine",  dst: "Middlebury",      status: "up" },
+  { src: "Constantine",  dst: "Novi",            status: "up" },
+  { src: "Middlebury",   dst: "Novi",            status: "up" },
+  { src: "Canton",       dst: "Canton Warehouse",status: "up" },
+  { src: "Canton",       dst: "Novi",            status: "up" },
+  { src: "Novi",         dst: "Azure",           status: "up" },
+];
 
 const STATUS_COLOR = {
   up:      "#00FF66",
@@ -89,8 +103,19 @@ export default function NetworkMap() {
   const siteStatusMap = {};
   sites.forEach(s => { siteStatusMap[s.name] = s; });
 
-  const upCount   = links.filter(l => l.status === "up").length;
-  const downCount = links.filter(l => l.status === "down").length;
+  // Use live Aruba links when available; fall back to static mesh topology
+  const activeLinks = links.length > 0 ? links : MESH_LINKS;
+
+  // For counting: treat all fallback mesh links as "up" unless site WAN is down
+  const effectiveLinks = activeLinks.map(l => {
+    if (links.length > 0) return l; // Aruba gives real status
+    const srcDown = siteStatusMap[l.src]?.status === "offline";
+    const dstDown = siteStatusMap[l.dst]?.status === "offline";
+    return { ...l, status: (srcDown || dstDown) ? "down" : "up" };
+  });
+
+  const upCount   = effectiveLinks.filter(l => l.status !== "down").length;
+  const downCount = effectiveLinks.filter(l => l.status === "down").length;
 
   return (
     <div className="h-full flex flex-col gap-3">
@@ -161,7 +186,7 @@ export default function NetworkMap() {
             </defs>
 
             {/* Tunnel lines — green unless WAN is DOWN */}
-            {links.map((link, i) => {
+            {effectiveLinks.map((link, i) => {
               const src = SITES[link.src]?.coords;
               const dst = SITES[link.dst]?.coords;
               if (!src || !dst) return null;
