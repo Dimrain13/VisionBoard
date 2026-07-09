@@ -23,7 +23,7 @@ const SITES = {
   "Ovid":             { coords: [-84.370, 43.009]             },
   "Constantine":      { coords: [-85.667, 41.841]             },
   "Canton":           { coords: [-81.378, 40.799]             },
-  "Canton Warehouse": { coords: [-81.220, 41.020]             },
+  "Canton Warehouse": { coords: [-81.536, 40.578]             },
   "Middlebury":       { coords: [-85.960, 41.630]             },
   "Azure":            { coords: [-87.63,  41.88 ], cloud: true},
 };
@@ -175,7 +175,7 @@ export default function MapEmbed({ sites = [] }) {
               <text y={-(nr + 5)} textAnchor="middle" style={{
                 fontFamily:"'JetBrains Mono',monospace",
                 fontSize: hub ? 7.5 : 6.5,
-                fill: hub ? "#FAFAFA" : "#A1A1AA",
+                fill: hub ? "#FAFAFA" : "#D0D0D8",
                 letterSpacing:"0.05em",
                 fontWeight: hub ? 700 : 400,
               }}>

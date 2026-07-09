@@ -25,7 +25,7 @@ const SITES = {
   "Constantine":      { coords: [-85.667, 41.841] },
   "Novi":             { coords: [-83.476, 42.481] },
   "Canton":           { coords: [-81.378, 40.799] },
-  "Canton Warehouse": { coords: [-81.220, 41.020] },
+  "Canton Warehouse": { coords: [-81.536, 40.578] },
   "Middlebury":       { coords: [-85.960, 41.630] },
   "Azure":            { coords: [-87.63,  41.88 ] },
 };
@@ -266,7 +266,7 @@ export default function NetworkMap() {
                     style={{
                       fontSize:8.5,
                       fontFamily:"JetBrains Mono",
-                      fill: isSelected ? color : "#7A7A8A",
+                      fill: isSelected ? color : "#C8C8D4",
                       letterSpacing:"0.06em",
                       fontWeight: isSelected ? 700 : 400,
                     }}
