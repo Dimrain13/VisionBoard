@@ -13,9 +13,9 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 // US States TopoJSON — filtered to MI/OH/IN + surrounding context
 const GEO_URL = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json";
 
-// FIPS codes:  MI=26  OH=39  IN=18  (context: WI=55, IL=17, KY=21, PA=42, WV=54)
-const PRIMARY_STATES  = new Set(["26", "39", "18"]);
-const CONTEXT_STATES  = new Set(["55", "17", "21", "42", "54"]);
+// FIPS codes:  MI=26  OH=39  IN=18  IL=17  (context: WI=55, KY=21, PA=42, WV=54)
+const PRIMARY_STATES  = new Set(["26", "39", "18", "17"]);
+const CONTEXT_STATES  = new Set(["55", "21", "42", "54"]);
 
 // Actual lon/lat for each site — used for Marker + Line coordinates
 const SITES = {
@@ -27,8 +27,8 @@ const SITES = {
   "Canton":           { coords: [-81.378, 40.799] },
   "Canton Warehouse": { coords: [-81.220, 41.020] }, // offset NW for readability
   "Middlebury":       { coords: [-85.960, 41.630] }, // offset slightly west to separate from Constantine
-  // Azure Cloud — just off the northeast Michigan coast in Lake Huron
-  "Azure":            { coords: [-82.2,   44.9  ] },
+  // Azure Cloud — Microsoft Azure Central US region, hosted in Chicago, IL
+  "Azure":            { coords: [-87.63,  41.88 ] },
 };
 
 const STATUS_COLOR = {
@@ -45,10 +45,10 @@ const DOT_CLASS = {
   unknown: "dot-unknown",
 };
 
-// Mercator projection — framed to show MI (full) + NE Ohio (Canton) + N Indiana + Lake Huron (Azure)
+// Mercator projection — framed to show MI (full) + NE Ohio (Canton) + N Indiana + Chicago (Azure)
 const PROJECTION_CONFIG = {
-  scale: 4800,
-  center: [-83.0, 42.5],
+  scale: 4500,
+  center: [-84.8, 42.4],
 };
 
 export default function NetworkMap() {
@@ -223,7 +223,7 @@ export default function NetworkMap() {
 
                   {isCloud ? (
                     <g>
-                      <rect x={-28} y={-14} width={56} height={28}
+                      <rect x={-30} y={-14} width={60} height={28}
                         fill={isSelected ? `${color}22` : "#0B0B0F"}
                         stroke={color} strokeWidth={isSelected ? 2 : 1.5}
                       />
@@ -232,8 +232,8 @@ export default function NetworkMap() {
                         AZURE
                       </text>
                       <text y={8} textAnchor="middle"
-                        style={{ fontSize:6.5, fontFamily:"JetBrains Mono", fill:color, letterSpacing:"0.06em", opacity:0.7 }}>
-                        CLOUD
+                        style={{ fontSize:6, fontFamily:"JetBrains Mono", fill:color, letterSpacing:"0.06em", opacity:0.7 }}>
+                        CHICAGO
                       </text>
                     </g>
                   ) : (

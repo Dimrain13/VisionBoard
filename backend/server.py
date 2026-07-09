@@ -220,11 +220,11 @@ async def _wazuh_fetch_agents(settings: dict) -> list:
 
 # ─── Vendor Status ────────────────────────────────────────────────
 VENDORS = [
-    {"id": "crowdstrike",  "name": "CrowdStrike",    "dd_slug": "crowdstrike",             "status_url": "https://status.crowdstrike.com/api/v2/summary.json",  "web_url": "https://status.crowdstrike.com"},
-    {"id": "ninjaone",     "name": "NinjaOne (RMM)", "dd_slug": "ninjarmm",                "status_url": "https://status.ninjarmm.com/api/v2/summary.json",     "web_url": "https://status.ninjarmm.com"},
-    {"id": "zscaler",      "name": "Zscaler",        "dd_slug": "zscaler",                 "status_url": "https://trust.zscaler.com/api/v2/summary.json",       "web_url": "https://trust.zscaler.com"},
-    {"id": "microsoft365", "name": "Microsoft 365",  "dd_slug": "microsoft-office-365",    "status_url": "https://status.office365.com/api/v2/summary.json",    "web_url": "https://status.office365.com"},
-    {"id": "dynamics365",  "name": "Dynamics 365",   "dd_slug": "microsoft-dynamics-365",  "status_url": None,                                                  "web_url": "https://admin.powerplatform.microsoft.com/"},
+    {"id": "crowdstrike",  "name": "CrowdStrike",    "dd_slug": "crowdstrike",        "status_url": "https://status.crowdstrike.com/api/v2/summary.json",  "web_url": "https://status.crowdstrike.com"},
+    {"id": "ninjaone",     "name": "NinjaOne (RMM)", "dd_slug": "ninjaone",           "status_url": "https://status.ninjarmm.com/api/v2/summary.json",     "web_url": "https://status.ninjarmm.com"},
+    {"id": "zscaler",      "name": "Zscaler",        "dd_slug": "zscaler",            "status_url": "https://trust.zscaler.com/api/v2/summary.json",       "web_url": "https://trust.zscaler.com"},
+    {"id": "microsoft365", "name": "Microsoft 365",  "dd_slug": "microsoft-365",      "status_url": "https://status.office365.com/api/v2/summary.json",    "web_url": "https://status.office365.com"},
+    {"id": "dynamics365",  "name": "Dynamics 365",   "dd_slug": "microsoft-dynamics", "status_url": None,                                                  "web_url": "https://admin.powerplatform.microsoft.com/"},
 ]
 
 # ─── Downdetector API helpers ──────────────────────────────────────────────────
@@ -279,25 +279,30 @@ async def background_dd_token_refresher():
         await asyncio.sleep(2700)  # 45 minutes
 
 async def _dd_get_company_id(token: str, vendor_id: str, dd_slug: str) -> Optional[int]:
-    """Search Downdetector for a company by slug and cache the integer company_id."""
+    """Resolve a Downdetector company_id from a known URL slug.
+    Uses /slugs/{slug}/companies — more reliable than a text search."""
     if vendor_id in _dd_company_id_cache:
         return _dd_company_id_cache[vendor_id]
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.get(
-                f"https://downdetectorapi.com/v2/companies/search?q={dd_slug}",
+                f"https://downdetectorapi.com/v2/slugs/{dd_slug}/companies",
                 headers={"Authorization": f"Bearer {token}"}
             )
             if r.status_code == 200:
-                results = r.json()
-                if results:
-                    company_id = results[0].get("id")
+                data = r.json()
+                items = data if isinstance(data, list) else (data.get("companies") or [])
+                if items:
+                    company_id = items[0].get("id")
                     if company_id:
                         _dd_company_id_cache[vendor_id] = company_id
-                        logger.info(f"Downdetector: {vendor_id} -> company_id {company_id}")
+                        logger.info(f"Downdetector: {vendor_id} (slug={dd_slug}) -> company_id={company_id}")
                         return company_id
+                logger.warning(f"Downdetector: slug={dd_slug} returned no companies")
+            else:
+                logger.warning(f"Downdetector slug lookup HTTP {r.status_code} for slug={dd_slug}")
     except Exception as e:
-        logger.warning(f"Downdetector company search error for {vendor_id}: {e}")
+        logger.warning(f"Downdetector slug lookup error for {vendor_id} ({dd_slug}): {e}")
     return None
 
 async def _dd_check_status(vendor: dict, token: str) -> dict:
