@@ -232,10 +232,11 @@ VENDORS = [
 _dd_token_cache: dict = {"token": None, "expires_at": 0.0}
 _dd_company_id_cache: dict = {}  # vendor_id -> Downdetector company_id (cached per process)
 
-async def _dd_get_token(client_id: str, client_secret: str) -> Optional[str]:
-    """Obtain (or return cached) Downdetector Bearer token. Expires in 1 h."""
+async def _dd_get_token(client_id: str, client_secret: str, force: bool = False) -> Optional[str]:
+    """Obtain (or return cached) Downdetector Bearer token. Expires in 1 h.
+    Pass force=True to always generate a fresh token regardless of cache."""
     now = time.time()
-    if _dd_token_cache["token"] and now < _dd_token_cache["expires_at"] - 60:
+    if not force and _dd_token_cache["token"] and now < _dd_token_cache["expires_at"] - 60:
         return _dd_token_cache["token"]
     try:
         encoded = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
@@ -248,12 +249,34 @@ async def _dd_get_token(client_id: str, client_secret: str) -> Optional[str]:
                 data = r.json()
                 _dd_token_cache["token"]      = data["access_token"]
                 _dd_token_cache["expires_at"] = now + data.get("expires_in", 3600)
-                logger.info("Downdetector token obtained")
+                logger.info("Downdetector token obtained (expires_in=%ss)", data.get("expires_in", 3600))
                 return _dd_token_cache["token"]
             logger.warning(f"Downdetector token HTTP {r.status_code}: {r.text[:120]}")
     except Exception as e:
         logger.warning(f"Downdetector token error: {e}")
     return None
+
+async def background_dd_token_refresher():
+    """Proactively generate a fresh Downdetector Bearer token every 45 minutes.
+    Runs independently of API calls so the token is always ready when vendor-status is polled.
+    Reads credentials from MongoDB each cycle — picks up Settings changes automatically."""
+    await asyncio.sleep(12)  # Let other startup tasks settle first
+    while True:
+        try:
+            settings  = await db.settings.find_one({"_id": "app_settings"})
+            dd_id     = (settings or {}).get("downdetector_client_id", "")
+            dd_secret = (settings or {}).get("downdetector_client_secret", "")
+            if dd_id and dd_secret:
+                token = await _dd_get_token(dd_id, dd_secret, force=True)
+                if token:
+                    logger.info("Downdetector token refreshed by background task")
+                else:
+                    logger.warning("Downdetector background token refresh failed — will retry in 45 min")
+            else:
+                logger.debug("Downdetector credentials not configured — skipping token refresh")
+        except Exception as e:
+            logger.warning(f"Downdetector token refresher error: {e}")
+        await asyncio.sleep(2700)  # 45 minutes
 
 async def _dd_get_company_id(token: str, vendor_id: str, dd_slug: str) -> Optional[int]:
     """Search Downdetector for a company by slug and cache the integer company_id."""
@@ -502,6 +525,7 @@ async def lifespan(app: FastAPI):
     email_task    = asyncio.create_task(background_email_poller())
     aruba_task    = asyncio.create_task(background_aruba_warmer())
     vivantio_task = asyncio.create_task(background_vivantio_warmer())
+    dd_task       = asyncio.create_task(background_dd_token_refresher())
 
     # Start UniFi syslog UDP listener
     syslog_port = int(os.environ.get("UNIFI_SYSLOG_PORT", "5140"))
@@ -521,6 +545,7 @@ async def lifespan(app: FastAPI):
     email_task.cancel()
     aruba_task.cancel()
     vivantio_task.cancel()
+    dd_task.cancel()
     if transport:
         transport.close()
     try:
@@ -533,6 +558,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await vivantio_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await dd_task
     except asyncio.CancelledError:
         pass
     mongo_client.close()
