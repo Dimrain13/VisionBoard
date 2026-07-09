@@ -87,6 +87,19 @@ Create a dashboard in Python/React to display important information for IT at a 
 - Aruba only contributes `status` per site
 - Cache invalidated on circuit CRUD operations
 
+### UniFi Devices Tab ✅ (2026-07-09)
+- New `/unifi-devices` route + nav tab
+- Auto-detects UniFi OS vs Legacy API path
+- 2 controllers configurable in Settings → UNIFI CONTROLLERS
+- background_unifi_warmer() polls every 60s
+- Devices grouped by type: cameras, switches, APs, gateways
+
+### Gemini 3 Flash Dashboard Redesign ✅ (2026-07-09)
+- Left column: MapEmbed (hub-and-spoke SVG) + DIA Circuit strip
+- Right column: Alert stream + Vendor Health Matrix (4-col dot grid) + Ticket queue
+- 4 dramatic KPI cards at top (alerts, availability %, services, tickets)
+- MapEmbed.jsx: pure SVG, no GeoJSON dependency
+
 ### Downdetector API Integration ✅
 - OAuth2 client_credentials flow: POST /tokens → Bearer token
 - Background `background_dd_token_refresher()` runs every 45 minutes (proactive refresh)

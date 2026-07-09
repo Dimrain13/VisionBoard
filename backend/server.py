@@ -74,6 +74,17 @@ class SettingsUpdate(BaseModel):
     kiosk_interval: Optional[int] = None
     downdetector_client_id: Optional[str] = None
     downdetector_client_secret: Optional[str] = None
+    # UniFi Network Controller — up to two controllers
+    unifi_controller1_url: Optional[str] = None
+    unifi_controller1_username: Optional[str] = None
+    unifi_controller1_password: Optional[str] = None
+    unifi_controller1_site: Optional[str] = None   # default: "default"
+    unifi_controller1_label: Optional[str] = None  # display name e.g. "Main Campus"
+    unifi_controller2_url: Optional[str] = None
+    unifi_controller2_username: Optional[str] = None
+    unifi_controller2_password: Optional[str] = None
+    unifi_controller2_site: Optional[str] = None
+    unifi_controller2_label: Optional[str] = None
 
 # ─── UniFi Syslog ─────────────────────────────────────────────────
 def parse_unifi_syslog(raw: str) -> dict:
@@ -299,6 +310,105 @@ async def background_dd_token_refresher():
         except Exception as e:
             logger.warning(f"Downdetector token refresher error: {e}")
         await asyncio.sleep(2700)  # 45 minutes
+
+# ─── UniFi Network Controller ─────────────────────────────────────────────────
+
+UNIFI_TYPE_MAP = {
+    "uap": "access_point", "usw": "switch", "ugw": "gateway",
+    "uvc": "camera",       "udm": "gateway", "upd": "poe_switch",
+    "ulte": "lte_router",  "uas": "app_server",
+}
+
+def _fmt_uptime(seconds: int) -> str:
+    if seconds > 86400:
+        return f"{seconds // 86400}d {(seconds % 86400) // 3600}h"
+    if seconds > 3600:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+    if seconds > 0:
+        return f"{seconds // 60}m"
+    return ""
+
+def _norm_unifi_device(d: dict, label: str) -> dict:
+    type_raw = d.get("type", "").lower()
+    return {
+        "id":          d.get("mac") or d.get("_id", ""),
+        "name":        d.get("name") or d.get("hostname", "Unknown"),
+        "model":       d.get("model", ""),
+        "type":        UNIFI_TYPE_MAP.get(type_raw, "device"),
+        "type_raw":    type_raw,
+        "status":      "online" if d.get("state", 0) == 1 else "offline",
+        "ip":          d.get("ip", ""),
+        "mac":         d.get("mac", ""),
+        "uptime":      d.get("uptime", 0),
+        "uptime_str":  _fmt_uptime(d.get("uptime", 0)),
+        "version":     d.get("version", ""),
+        "controller":  label,
+        "num_sta":     d.get("num_sta", 0),   # connected clients (APs)
+        "num_port":    d.get("num_port", 0),  # ports (switches)
+    }
+
+async def _fetch_unifi_controller(url: str, username: str, password: str, site: str, label: str) -> list:
+    """Fetch all devices from one UniFi Network controller.
+    Auto-detects UniFi OS (UDM/UXG) vs legacy (CloudKey/USG) API path."""
+    if not url or not username:
+        return []
+    # Normalize: strip trailing slash
+    url = url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=True) as client:
+            creds = {"username": username, "password": password}
+            # 1. Try UniFi OS (Dream Machine, UXG, etc.) — /api/auth/login
+            r = await client.post(f"{url}/api/auth/login", json=creds)
+            if r.status_code in (200, 204):
+                dr = await client.get(f"{url}/proxy/network/api/s/{site}/stat/device")
+            else:
+                # 2. Legacy controller (CloudKey Gen1/Gen2, USG)
+                r2 = await client.post(f"{url}/api/login", json=creds)
+                if r2.status_code != 200:
+                    logger.warning(f"UniFi login failed for {url}: {r2.status_code}")
+                    return []
+                dr = await client.get(f"{url}/api/s/{site}/stat/device")
+
+            if dr.status_code != 200:
+                logger.warning(f"UniFi devices HTTP {dr.status_code} from {url}")
+                return []
+            return [_norm_unifi_device(d, label) for d in dr.json().get("data", [])]
+    except Exception as e:
+        logger.warning(f"UniFi controller {url} error: {e}")
+        return []
+
+_unifi_cache: dict = {}
+
+async def background_unifi_warmer():
+    """Refresh UniFi device list from both controllers every 60 s."""
+    await asyncio.sleep(20)
+    while True:
+        try:
+            s = (await db.settings.find_one({"_id": "app_settings"})) or {}
+            tasks = []
+            if s.get("unifi_controller1_url") and s.get("unifi_controller1_username"):
+                tasks.append(_fetch_unifi_controller(
+                    s["unifi_controller1_url"], s["unifi_controller1_username"],
+                    s.get("unifi_controller1_password", ""),
+                    s.get("unifi_controller1_site", "default"),
+                    s.get("unifi_controller1_label", "Site 1"),
+                ))
+            if s.get("unifi_controller2_url") and s.get("unifi_controller2_username"):
+                tasks.append(_fetch_unifi_controller(
+                    s["unifi_controller2_url"], s["unifi_controller2_username"],
+                    s.get("unifi_controller2_password", ""),
+                    s.get("unifi_controller2_site", "default"),
+                    s.get("unifi_controller2_label", "Site 2"),
+                ))
+            if tasks:
+                results = await asyncio.gather(*tasks)
+                devices = [d for sub in results for d in sub]
+                _unifi_cache["devices"] = devices
+                _unifi_cache["updated"] = datetime.now(timezone.utc).isoformat()
+                logger.info(f"UniFi warmer: {len(devices)} devices cached")
+        except Exception as e:
+            logger.warning(f"UniFi warmer error: {e}")
+        await asyncio.sleep(60)
 
 async def _dd_get_company_id(token: str, vendor_id: str, dd_slug: str) -> Optional[int]:
     """Resolve a Downdetector company_id from a known URL slug.
@@ -554,6 +664,7 @@ async def lifespan(app: FastAPI):
     aruba_task    = asyncio.create_task(background_aruba_warmer())
     vivantio_task = asyncio.create_task(background_vivantio_warmer())
     dd_task       = asyncio.create_task(background_dd_token_refresher())
+    unifi_task    = asyncio.create_task(background_unifi_warmer())
 
     # Start UniFi syslog UDP listener
     syslog_port = int(os.environ.get("UNIFI_SYSLOG_PORT", "5140"))
@@ -574,6 +685,7 @@ async def lifespan(app: FastAPI):
     aruba_task.cancel()
     vivantio_task.cancel()
     dd_task.cancel()
+    unifi_task.cancel()
     if transport:
         transport.close()
     try:
@@ -590,6 +702,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await dd_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await unifi_task
     except asyncio.CancelledError:
         pass
     mongo_client.close()
@@ -1077,6 +1193,37 @@ async def get_unifi_events(severity: str = None, limit: int = 200):
 async def clear_unifi_events():
     result = await db.unifi_events.delete_many({})
     return {"deleted": result.deleted_count}
+
+@api_router.get("/unifi/devices")
+async def get_unifi_devices_endpoint():
+    """Return all UniFi devices from both configured controllers (cache-first)."""
+    if "devices" in _unifi_cache:
+        return {"devices": _unifi_cache["devices"], "updated": _unifi_cache.get("updated")}
+
+    s = (await db.settings.find_one({"_id": "app_settings"})) or {}
+    tasks = []
+    if s.get("unifi_controller1_url") and s.get("unifi_controller1_username"):
+        tasks.append(_fetch_unifi_controller(
+            s["unifi_controller1_url"], s["unifi_controller1_username"],
+            s.get("unifi_controller1_password", ""),
+            s.get("unifi_controller1_site", "default"),
+            s.get("unifi_controller1_label", "Site 1"),
+        ))
+    if s.get("unifi_controller2_url") and s.get("unifi_controller2_username"):
+        tasks.append(_fetch_unifi_controller(
+            s["unifi_controller2_url"], s["unifi_controller2_username"],
+            s.get("unifi_controller2_password", ""),
+            s.get("unifi_controller2_site", "default"),
+            s.get("unifi_controller2_label", "Site 2"),
+        ))
+    devices = []
+    if tasks:
+        for sub in await asyncio.gather(*tasks):
+            devices.extend(sub)
+    now = datetime.now(timezone.utc).isoformat()
+    _unifi_cache["devices"] = devices
+    _unifi_cache["updated"] = now
+    return {"devices": devices, "updated": now}
 
 
 # ─── Vivantio Ticketing ───────────────────────────────────────────────────────

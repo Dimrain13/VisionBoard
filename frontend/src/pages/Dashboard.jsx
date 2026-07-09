@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
   Bell, Network, Ticket, Activity, CheckCircle, ArrowRight,
-  ShieldAlert, Wifi,
+  ShieldAlert, Wifi, Camera, Monitor, Server, Router
 } from "lucide-react";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import { Link } from "react-router-dom";
@@ -18,9 +18,9 @@ const SEV_CONFIG = {
 
 const VENDOR_STATUS = {
   operational:  { color: "#00FF66", dot: "dot-online",   label: "OK"    },
-  minor_outage: { color: "#FFB014", dot: "dot-degraded", label: "MINOR" },
+  minor_outage: { color: "#FFB014", dot: "dot-degraded", label: "WARN" },
   major_outage: { color: "#FF2A2A", dot: "dot-offline",  label: "DOWN"  },
-  unknown:      { color: "#3A3A48", dot: "dot-unknown",  label: "—"     },
+  unknown:      { color: "#3A3A48", dot: "dot-unknown",  label: "???"     },
 };
 
 const PRI_COLOR = {
@@ -32,18 +32,18 @@ const PRI_COLOR = {
 
 function KPICard({ testId, label, value, sub, color = "#E2E2E5", Icon, glowColor }) {
   return (
-    <div data-testid={testId} className="card p-5" style={{ borderTop: `2px solid ${color}20` }}>
+    <div data-testid={testId} className="card" style={{ padding: "16px 20px", borderLeft: `2px solid ${color}` }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div style={{ flex: 1 }}>
-          <div className="section-label" style={{ marginBottom: 10 }}>{label}</div>
+          <div className="section-label" style={{ marginBottom: 8 }}>{label}</div>
           <div
             style={{
               fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 36,
-              fontWeight: 700,
+              fontSize: 42,
+              fontWeight: 800,
               color,
               lineHeight: 1,
-              letterSpacing: "-0.02em",
+              letterSpacing: "-0.04em",
               textShadow: glowColor ? `0 0 20px ${glowColor}` : "none",
             }}
           >
@@ -52,10 +52,11 @@ function KPICard({ testId, label, value, sub, color = "#E2E2E5", Icon, glowColor
           {sub && (
             <div style={{
               fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 9.5,
+              fontSize: 10,
               color: "#3A3A48",
               letterSpacing: "0.06em",
-              marginTop: 8,
+              marginTop: 10,
+              textTransform: "uppercase"
             }}>
               {sub}
             </div>
@@ -63,9 +64,9 @@ function KPICard({ testId, label, value, sub, color = "#E2E2E5", Icon, glowColor
         </div>
         {Icon && (
           <Icon
-            size={28}
+            size={32}
             strokeWidth={1}
-            style={{ color, opacity: 0.15, marginLeft: 12, flexShrink: 0, marginTop: 4 }}
+            style={{ color, opacity: 0.2, marginLeft: 12, flexShrink: 0 }}
           />
         )}
       </div>
@@ -91,9 +92,9 @@ export default function Dashboard() {
         axios.get(`${API}/sites`),
       ]);
       setSummary(s.data);
-      setAlerts(a.data.items.slice(0, 8));
+      setAlerts(a.data.items.slice(0, 10));
       setVendors(v.data);
-      setTickets(t.data.items.slice(0, 6));
+      setTickets(t.data.items.slice(0, 5));
       setSites(si.data);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -106,15 +107,11 @@ export default function Dashboard() {
   }, [loadAll]);
 
   if (loading) return (
-    <div className="h-full flex flex-col gap-3">
+    <div className="h-full flex flex-col gap-3" style={{ background: "#0B0B0F", padding: 12 }}>
       <div className="grid grid-cols-4 gap-3">
-        {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 100 }} />)}
+        {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 120 }} />)}
       </div>
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div className="skeleton" />
-        <div className="skeleton" />
-      </div>
-      <div style={{ height: 260, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 12 }}>
         <div className="skeleton" />
         <div className="skeleton" />
       </div>
@@ -129,214 +126,214 @@ export default function Dashboard() {
   const offlineSites    = sites.filter(st => st.status === "offline").length;
 
   return (
-    <div className="h-full flex flex-col gap-3">
+    <div className="h-full flex flex-col gap-3" style={{ background: "#0B0B0F", padding: "12px", maxHeight: "100vh", overflow: "hidden" }}>
 
-      {/* ── Row 1: KPI Cards ──────────────────────────────────────────── */}
+      {/* ── Row 1: KPI DRAMA ────────────────────────────────────────── */}
       <div className="grid grid-cols-4 gap-3" style={{ flexShrink: 0 }}>
         <KPICard
           testId="kpi-active-alerts"
-          label="Active Alerts"
+          label="System Alerts"
           Icon={Bell}
           value={s.alerts?.unacknowledged ?? 0}
-          sub={`${criticalAlerts} critical · ${s.alerts?.warning ?? 0} warning`}
+          sub={`${criticalAlerts} CRITICAL · ${s.alerts?.warning ?? 0} WARNING`}
           color={criticalAlerts > 0 ? "#FF2A2A" : s.alerts?.warning > 0 ? "#FFB014" : "#00FF66"}
-          glowColor={criticalAlerts > 0 ? "#FF2A2A40" : null}
+          glowColor={criticalAlerts > 0 ? "#FF2A2A60" : s.alerts?.warning > 0 ? "#FFB01440" : null}
         />
         <KPICard
           testId="kpi-circuits"
-          label="DIA Circuits Online"
+          label="Network Availability"
           Icon={Wifi}
-          value={`${s.circuits?.up ?? 0} / ${circuitsTotal}`}
-          sub={`${circuitsDown} down · ${s.circuits?.degraded ?? 0} degraded`}
-          color={circuitsDown > 0 ? "#FF2A2A" : s.circuits?.degraded > 0 ? "#FFB014" : "#E2E2E5"}
-        />
-        <KPICard
-          testId="kpi-tickets"
-          label="Open Tickets"
-          Icon={Ticket}
-          value={(s.tickets?.open ?? 0) + (s.tickets?.in_progress ?? 0)}
-          sub={`${s.tickets?.critical ?? 0} critical priority`}
-          color={s.tickets?.critical > 0 ? "#FF2A2A" : "#E2E2E5"}
+          value={`${((s.circuits?.up / s.circuits?.total) * 100 || 0).toFixed(1)}%`}
+          sub={`${circuitsDown} CIRCUITS OFFLINE · ${s.circuits?.degraded ?? 0} DEGRADED`}
+          color={circuitsDown > 0 ? "#FF2A2A" : s.circuits?.degraded > 0 ? "#FFB014" : "#00FF66"}
+          glowColor={circuitsDown > 0 ? "#FF2A2A40" : null}
         />
         <KPICard
           testId="kpi-vendors"
-          label="Vendor Health"
+          label="External Services"
           Icon={Activity}
-          value={`${vendors.filter(v => v.status === "operational").length} / ${vendors.length}`}
-          sub={`${offlineSites} site${offlineSites !== 1 ? "s" : ""} offline`}
-          color={criticalVendors > 0 ? "#FF2A2A" : "#E2E2E5"}
+          value={`${vendors.filter(v => v.status === "operational").length}/${vendors.length}`}
+          sub={`${criticalVendors} VENDOR OUTAGES REPORTED`}
+          color={criticalVendors > 0 ? "#FF2A2A" : "#00E5FF"}
+          glowColor={criticalVendors > 0 ? "#FF2A2A40" : null}
+        />
+        <KPICard
+          testId="kpi-tickets"
+          label="Response Queue"
+          Icon={Ticket}
+          value={(s.tickets?.open ?? 0) + (s.tickets?.in_progress ?? 0)}
+          sub={`${s.tickets?.critical ?? 0} TICKETS AT CRITICAL PRIORITY`}
+          color={s.tickets?.critical > 0 ? "#FF2A2A" : "#E2E2E5"}
         />
       </div>
 
-      {/* ── Row 2: Alert Feed + Vendor Status ────────────────────────── */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "3fr 2fr", gap: 12, minHeight: 0 }}>
-
-        {/* Alert Feed */}
-        <div className="card flex flex-col min-h-0">
-          <div className="card-header">
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <ShieldAlert size={12} style={{ color: "#FF2A2A" }} />
-              ACTIVE ALERT FEED
-            </span>
-            <Link
-              to="/alerts"
-              style={{ display: "flex", alignItems: "center", gap: 6, color: "#3A3A48", textDecoration: "none", fontSize: 10, letterSpacing: "0.1em" }}
-              onMouseEnter={e => e.currentTarget.style.color = "#00E5FF"}
-              onMouseLeave={e => e.currentTarget.style.color = "#3A3A48"}
-            >
-              VIEW ALL <ArrowRight size={10} />
-            </Link>
-          </div>
-          <div style={{ flex: 1, overflow: "auto" }}>
-            {alerts.length === 0 ? (
-              <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
-                <CheckCircle size={24} style={{ color: "#00FF66" }} strokeWidth={1.5} />
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3A3A48", letterSpacing: "0.15em" }}>
-                  NO ACTIVE ALERTS
-                </span>
+      {/* ── MAIN CONTENT SPLIT ────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 12, minHeight: 0 }}>
+        
+        {/* LEFT COLUMN: Map & Site Strip */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+          <div className="card flex flex-col" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+            <div className="card-header" style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, background: "rgba(15, 15, 20, 0.85)", backdropFilter: "blur(4px)" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Network size={14} style={{ color: "#00E5FF" }} />
+                GLOBAL TOPOLOGY MESH
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
+                {[["#00FF66","ACTIVE"],["#FFB014","DEGRADED"],["#FF2A2A","OFFLINE"]].map(([c, l]) => (
+                  <span key={l} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 9, color: "#A1A1AA", letterSpacing: "0.1em" }}>
+                    <div style={{ width: 6, height: 6, background: c, boxShadow: `0 0 4px ${c}` }} /> {l}
+                  </span>
+                ))}
               </div>
-            ) : (
-              alerts.map(alert => {
-                const cfg = SEV_CONFIG[alert.severity] || SEV_CONFIG.info;
-                return (
-                  <div
-                    key={alert.id}
-                    data-testid={`alert-item-${alert.severity}`}
-                    className={`table-row ${cfg.bar}`}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px" }}
-                  >
-                    <span className={`badge ${cfg.badge}`} style={{ flexShrink: 0 }}>{cfg.label}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: "#E2E2E5", fontFamily: "'JetBrains Mono', monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {alert.title}
-                      </div>
-                      <div style={{ display: "flex", gap: 8, marginTop: 3, fontSize: 10, color: "#3A3A48", fontFamily: "'JetBrains Mono', monospace" }}>
-                        {alert.site && <span>{alert.site}</span>}
-                        {alert.device && <><span>·</span><span>{alert.device}</span></>}
-                        <span>· {formatDistanceToNowStrict(parseISO(alert.created_at), { addSuffix: true })}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+            </div>
+            <div style={{ flex: 1, background: "#030305" }}>
+              <MapEmbed sites={sites} />
+            </div>
+          </div>
+
+          {/* DIA Circuits Strip */}
+          <div className="card" style={{ height: 80, padding: "12px 16px", overflow: "hidden" }}>
+            <div className="section-label" style={{ marginBottom: 10 }}>DIA CIRCUIT STATUS ENGINE</div>
+            <div style={{ display: "flex", gap: 20, overflowX: "auto", paddingBottom: 5 }}>
+              {sites.map(site => (
+                <div key={site.id} style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap", flexShrink: 0 }}>
+                  <div className={site.status === "online" ? "dot-online" : "dot-offline"} style={{ width: 8, height: 8 }} />
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: site.status === "online" ? "#E2E2E5" : "#FF2A2A" }}>
+                    {site.name}
+                  </span>
+                  <span style={{ fontSize: 9, color: "#3A3A48" }}>{site.bandwidth_mbps}M</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Vendor Status */}
-        <div className="card flex flex-col min-h-0">
-          <div className="card-header">
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Network size={12} style={{ color: "#00E5FF", opacity: 0.7 }} />
-              VENDOR STATUS
-            </span>
-            <Link
-              to="/status"
-              style={{ display: "flex", alignItems: "center", gap: 6, color: "#3A3A48", textDecoration: "none", fontSize: 10, letterSpacing: "0.1em" }}
-              onMouseEnter={e => e.currentTarget.style.color = "#00E5FF"}
-              onMouseLeave={e => e.currentTarget.style.color = "#3A3A48"}
-            >
-              DETAILS <ArrowRight size={10} />
-            </Link>
+        {/* RIGHT COLUMN: Alerts, Vendors, Tickets */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+          
+          {/* Active Alerts */}
+          <div className="card flex flex-col" style={{ flex: 1.2, minHeight: 0 }}>
+            <div className="card-header">
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <ShieldAlert size={14} style={{ color: "#FF2A2A" }} />
+                CRITICAL EVENT STREAM
+              </span>
+              <Link to="/alerts" className="btn" style={{ fontSize: 9, padding: "2px 8px", color: "#A1A1AA", textDecoration: "none" }}>ALL EVENTS</Link>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {alerts.length === 0 ? (
+                <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.3 }}>
+                  <CheckCircle size={32} strokeWidth={1} />
+                  <div className="section-label" style={{ marginTop: 12 }}>All Systems Nominal</div>
+                </div>
+              ) : (
+                alerts.map(alert => {
+                  const cfg = SEV_CONFIG[alert.severity] || SEV_CONFIG.info;
+                  return (
+                    <div key={alert.id} className={`table-row`} style={{ padding: "12px 16px", borderLeft: `3px solid ${cfg.text}`, borderBottom: "1px solid #1C1C24" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ color: cfg.text, fontSize: 10, fontWeight: 700, letterSpacing: "0.1em" }}>{cfg.label}</span>
+                        <span style={{ color: "#3A3A48", fontSize: 9 }}>{formatDistanceToNowStrict(parseISO(alert.created_at))} AGO</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#FAFAFA", marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {alert.title}
+                      </div>
+                      <div style={{ fontSize: 9, color: "#A1A1AA", display: "flex", gap: 8 }}>
+                        <span style={{ color: "#00E5FF" }}>{alert.site}</span>
+                        <span style={{ color: "#3A3A48" }}>//</span>
+                        <span>{alert.device || "SYSTEM"}</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
-          <div style={{ flex: 1, overflow: "auto" }}>
-            {vendors.map(vendor => {
-              const cfg = VENDOR_STATUS[vendor.status] || VENDOR_STATUS.unknown;
-              return (
-                <div
-                  key={vendor.id}
-                  data-testid={`vendor-status-${vendor.id}`}
-                  className="table-row"
-                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px" }}
-                >
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#C0C0CC" }}>
-                    {vendor.name}
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: cfg.color, letterSpacing: "0.1em" }}>
-                      {cfg.label}
-                    </span>
-                    <div style={{ position: "relative", display: "flex", width: 7, height: 7 }}>
-                      {vendor.status !== "operational" && vendor.status !== "unknown" && (
-                        <div className={`ping absolute ${cfg.dot}`} style={{ width: 7, height: 7 }} />
-                      )}
-                      <div className={`relative ${cfg.dot}`} style={{ width: 7, height: 7 }} />
+
+          {/* Vendor Matrix Grid */}
+          <div className="card" style={{ flex: 0.8, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div className="card-header">
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Server size={14} style={{ color: "#00FF66" }} />
+                VENDOR HEALTH MATRIX
+              </span>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "12px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
+              {vendors.map(vendor => {
+                const cfg = VENDOR_STATUS[vendor.status] || VENDOR_STATUS.unknown;
+                return (
+                  <div 
+                    key={vendor.id} 
+                    style={{ 
+                      padding: "8px", 
+                      background: "#131318", 
+                      border: "1px solid #1C1C24",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      textAlign: "center"
+                    }}
+                  >
+                    <div style={{ position: "relative", width: 8, height: 8 }}>
+                      {vendor.status !== "operational" && <div className={`ping absolute ${cfg.dot}`} style={{ width: 8, height: 8 }} />}
+                      <div className={cfg.dot} style={{ width: 8, height: 8 }} />
+                    </div>
+                    <div style={{ fontSize: 8, color: "#A1A1AA", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                      {vendor.name.split(' ')[0]}
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Compact Tickets */}
+          <div className="card" style={{ height: 180, display: "flex", flexDirection: "column" }}>
+            <div className="card-header">
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Ticket size={14} style={{ color: "#FFB014" }} />
+                INCIDENT QUEUE
+              </span>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {tickets.map(t => (
+                <div key={t.id} className="table-row" style={{ display: "flex", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #1C1C24" }}>
+                  <div style={{ width: 3, height: 16, background: PRI_COLOR[t.priority], marginRight: 12 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: "#D4D4D8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                    <div style={{ fontSize: 9, color: "#3A3A48" }}>{t.ticket_number} · {t.status.replace("_", " ")}</div>
+                  </div>
+                  <ArrowRight size={10} style={{ color: "#1C1C24" }} />
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Row 3: Network Map + Recent Tickets ──────────────────────── */}
-      <div style={{ height: 260, display: "grid", gridTemplateColumns: "3fr 2fr", gap: 12, flexShrink: 0 }}>
-
-        {/* Map */}
-        <div className="card overflow-hidden flex flex-col">
-          <div className="card-header">
-            <span>NETWORK TOPOLOGY</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              {[["#00FF66","ONLINE"],["#FFB014","DEGRADED"],["#FF2A2A","OFFLINE"]].map(([c, l]) => (
-                <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 9.5, color: "#3A3A48", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.1em" }}>
-                  <span style={{ width: 5, height: 5, background: c, display: "inline-block", flexShrink: 0 }} />{l}
-                </span>
-              ))}
-              <Link
-                to="/map"
-                style={{ display: "flex", alignItems: "center", gap: 5, color: "#3A3A48", textDecoration: "none", fontSize: 9.5, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.1em" }}
-                onMouseEnter={e => e.currentTarget.style.color = "#00E5FF"}
-                onMouseLeave={e => e.currentTarget.style.color = "#3A3A48"}
-              >
-                FULL VIEW <ArrowRight size={9} />
-              </Link>
-            </div>
-          </div>
-          <div style={{ flex: 1, overflow: "hidden" }}>
-            <MapEmbed sites={sites} />
-          </div>
+      {/* ── FOOTER STATUS LINE ──────────────────────────────────────── */}
+      <div style={{ 
+        height: 24, 
+        background: "#030305", 
+        border: "1px solid #1C1C24", 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "space-between", 
+        padding: "0 16px",
+        fontSize: 9,
+        color: "#3A3A48",
+        letterSpacing: "0.15em"
+      }}>
+        <div style={{ display: "flex", gap: 20 }}>
+          <span>SYSTEM_OS: v4.2.0-STABLE</span>
+          <span>LATENCY: 14ms</span>
+          <span>NODE: US-EAST-01</span>
         </div>
-
-        {/* Recent Tickets */}
-        <div className="card flex flex-col">
-          <div className="card-header">
-            <span>RECENT TICKETS</span>
-            <Link
-              to="/tickets"
-              style={{ display: "flex", alignItems: "center", gap: 6, color: "#3A3A48", textDecoration: "none", fontSize: 10, letterSpacing: "0.1em" }}
-              onMouseEnter={e => e.currentTarget.style.color = "#00E5FF"}
-              onMouseLeave={e => e.currentTarget.style.color = "#3A3A48"}
-            >
-              VIEW ALL <ArrowRight size={10} />
-            </Link>
-          </div>
-          <div style={{ flex: 1, overflow: "auto" }}>
-            {tickets.map(t => (
-              <div
-                key={t.id}
-                data-testid={`ticket-item-${t.id}`}
-                className="table-row"
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px" }}
-              >
-                <div style={{
-                  width: 2,
-                  height: 30,
-                  background: PRI_COLOR[t.priority] || "#3A3A48",
-                  flexShrink: 0,
-                  boxShadow: t.priority === "critical" ? `0 0 6px ${PRI_COLOR.critical}` : "none",
-                }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: "#C0C0CC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {t.title}
-                  </div>
-                  <div style={{ fontSize: 9.5, fontFamily: "'JetBrains Mono', monospace", color: "#3A3A48", marginTop: 2, letterSpacing: "0.05em" }}>
-                    {t.ticket_number} · {t.status.replace("_", " ")}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div style={{ display: "flex", gap: 20, color: "#00E5FF" }}>
+          <span>REFRESH_CYCLE: 30S</span>
+          <span>{format(new Date(), "yyyy-MM-dd HH:mm:ss").toUpperCase()}</span>
         </div>
       </div>
     </div>

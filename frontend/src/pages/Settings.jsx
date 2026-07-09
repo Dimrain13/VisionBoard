@@ -336,6 +336,68 @@ export default function Settings() {
           </div>
         </Section>
 
+        {/* UniFi Controllers */}
+        <Section title="UNIFI CONTROLLERS">
+          {[1, 2].map(n => (
+            <div key={n} style={{ marginBottom: n === 1 ? 20 : 0 }}>
+              <div className="section-label" style={{ marginBottom: 10, color: "#52525B" }}>CONTROLLER {n}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10, marginBottom: 8 }}>
+                <div>
+                  <div className="section-label mb-1.5">URL</div>
+                  <input data-testid={`settings-unifi_controller${n}_url`}
+                    placeholder="https://192.168.1.1 or https://unifi.domain.com"
+                    className="input"
+                    value={settings[`unifi_controller${n}_url`] || ""}
+                    onChange={e => set(`unifi_controller${n}_url`, e.target.value)} />
+                </div>
+                <div>
+                  <div className="section-label mb-1.5">SITE</div>
+                  <input data-testid={`settings-unifi_controller${n}_site`}
+                    placeholder="default"
+                    className="input"
+                    value={settings[`unifi_controller${n}_site`] || ""}
+                    onChange={e => set(`unifi_controller${n}_site`, e.target.value)} />
+                </div>
+                <div>
+                  <div className="section-label mb-1.5">DISPLAY LABEL</div>
+                  <input data-testid={`settings-unifi_controller${n}_label`}
+                    placeholder={`Site ${n}`}
+                    className="input"
+                    value={settings[`unifi_controller${n}_label`] || ""}
+                    onChange={e => set(`unifi_controller${n}_label`, e.target.value)} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div className="section-label mb-1.5">USERNAME</div>
+                  <input data-testid={`settings-unifi_controller${n}_username`}
+                    placeholder="admin"
+                    className="input"
+                    value={settings[`unifi_controller${n}_username`] || ""}
+                    onChange={e => set(`unifi_controller${n}_username`, e.target.value)} />
+                </div>
+                <div>
+                  <div className="section-label mb-1.5">PASSWORD</div>
+                  <input data-testid={`settings-unifi_controller${n}_password`}
+                    type="password"
+                    placeholder="••••••••"
+                    className="input"
+                    value={settings[`unifi_controller${n}_password`] || ""}
+                    onChange={e => set(`unifi_controller${n}_password`, e.target.value)} />
+                </div>
+              </div>
+            </div>
+          ))}
+          <div className="mt-4 p-3" style={{ background: "rgba(0,229,255,0.02)", border: "1px solid rgba(0,229,255,0.08)" }}>
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3F3F46", lineHeight: 2 }}>
+              <span style={{ color: "#00E5FF", letterSpacing: "0.1em" }}>SUPPORTS:</span>{" "}
+              UniFi OS (Dream Machine, UXG) and Legacy controllers (CloudKey, USG).
+              Auto-detects API version. SSL verification disabled for self-signed certs.{" "}
+              <span style={{ color: "#A1A1AA" }}>Cameras, Switches, and APs all appear on the UNIFI DEVICES tab.</span>
+            </p>
+          </div>
+        </Section>
+
         {/* UniFi Syslog */}
         <Section title="UNIFI SYSLOG RECEIVER">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

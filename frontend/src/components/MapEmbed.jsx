@@ -1,81 +1,114 @@
+/**
+ * MapEmbed — lightweight hub-and-spoke topology diagram for the Dashboard.
+ * Shows all network sites connected to the Azure hub, colored by circuit status.
+ * Does NOT depend on react-simple-maps (fast, no GeoJSON needed).
+ */
 import React from "react";
-import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
 
-const GEO_URL = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json";
-const MI_OH_IN = ["26", "39", "18"];
-const CONNECTIONS = [
-  ["novi", "remus"], ["novi", "ovid"], ["novi", "mt-pleasant"],
-  ["novi", "constantine"], ["novi", "canton-plant"], ["novi", "canton-warehouse"],
-  ["novi", "middlebury"], ["constantine", "middlebury"],
-];
-const DOT_COLOR = { online: "#22C55E", degraded: "#F59E0B", offline: "#EF4444", unknown: "#3F3F46" };
-const SHORT_LABEL = { "Mt. Pleasant": "Mt. Plsnt", "Canton Warehouse": "Canton WH", "Canton Plant": "Ctn. Plant" };
+const STATUS_COLOR = {
+  online:   "#00FF66",
+  up:       "#00FF66",
+  offline:  "#FF2A2A",
+  down:     "#FF2A2A",
+  degraded: "#FFB014",
+  unknown:  "#3A3A48",
+};
 
-export default function MapEmbed({ sites = [], onSiteClick, selectedId }) {
-  const get = (id) => sites.find(s => s.id === id);
+// Fixed polar layout — sites arranged clockwise around Azure hub
+const SITE_ANGLES = {
+  "Remus":             -100,
+  "Mt. Pleasant":       -70,
+  "Ovid":               -35,
+  "Novi":                10,
+  "Canton":              45,
+  "Canton Warehouse":    70,
+  "Constantine":        130,
+  "Middlebury":         165,
+};
 
-  const lineStroke = (fId, tId) => {
-    const f = get(fId), t = get(tId);
-    if (!f || !t) return "rgba(63,63,70,0.4)";
-    if (f.status === "offline" || t.status === "offline") return "rgba(239,68,68,0.35)";
-    if (f.status === "degraded" || t.status === "degraded") return "rgba(245,158,11,0.3)";
-    return "rgba(63,63,70,0.5)";
-  };
+export default function MapEmbed({ sites = [] }) {
+  const W = 700, H = 420, CX = W / 2, CY = H / 2 - 10;
+  const R = Math.min(W, H) * 0.38;
+
+  const siteNodes = (sites.length ? sites : Object.keys(SITE_ANGLES).map(name => ({ name, status: "unknown" }))).map(site => {
+    const angle = SITE_ANGLES[site.name] ?? 0;
+    const rad   = (angle * Math.PI) / 180;
+    return {
+      ...site,
+      x:     CX + R * Math.cos(rad),
+      y:     CY + R * Math.sin(rad),
+      color: STATUS_COLOR[site.status] ?? STATUS_COLOR.unknown,
+    };
+  });
 
   return (
-    <ComposableMap
-      projection="geoMercator"
-      projectionConfig={{ scale: 5200, center: [-83.2, 42.4] }}
-      style={{ width: "100%", height: "100%" }}
+    <svg
+      width="100%"
+      height="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
+      style={{ background: "transparent" }}
     >
-      <Geographies geography={GEO_URL}>
-        {({ geographies }) =>
-          geographies.filter(g => MI_OH_IN.includes(g.id)).map(g => (
-            <Geography key={g.rsmKey} geography={g}
-              fill="rgba(39,39,42,0.25)" stroke="#27272A" strokeWidth={0.6}
-              style={{ default: { outline: "none" }, hover: { outline: "none" }, pressed: { outline: "none" } }}
-            />
-          ))
-        }
-      </Geographies>
+      <defs>
+        <filter id="me-glow-cyan">
+          <feGaussianBlur stdDeviation="3" result="b" />
+          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+        <style>{`
+          @keyframes me-packet { 0% { stroke-dashoffset: 32; } 100% { stroke-dashoffset: 0; } }
+          .me-tunnel { animation: me-packet 2s linear infinite; }
+        `}</style>
+      </defs>
 
-      {sites.length > 0 && CONNECTIONS.map(([fId, tId]) => {
-        const f = get(fId), t = get(tId);
-        if (!f || !t) return null;
-        return (
-          <Line key={`${fId}-${tId}`}
-            coordinates={[f.coordinates, t.coordinates]}
-            stroke={lineStroke(fId, tId)} strokeWidth={0.9} strokeLinecap="round"
+      {/* Orbit ring */}
+      <circle cx={CX} cy={CY} r={R} fill="none" stroke="#1C1C24" strokeWidth={0.5} strokeDasharray="4 6" />
+
+      {/* Tunnel lines */}
+      {siteNodes.map(site => (
+        <g key={`l-${site.id || site.name}`}>
+          <line x1={site.x} y1={site.y} x2={CX} y2={CY} stroke={site.color} strokeWidth={1} opacity={0.15} />
+          <line className="me-tunnel" x1={site.x} y1={site.y} x2={CX} y2={CY}
+            stroke={site.color} strokeWidth={1.5} opacity={0.7}
+            strokeDasharray="6 26"
+            style={{ animationDelay: `${(SITE_ANGLES[site.name] ?? 0) * 5}ms` }}
           />
+        </g>
+      ))}
+
+      {/* Site nodes */}
+      {siteNodes.map(site => {
+        const isLeft  = site.x < CX - 20;
+        const isRight = site.x > CX + 20;
+        const anchor  = isLeft ? "end" : isRight ? "start" : "middle";
+        const lx = isLeft ? site.x - 10 : isRight ? site.x + 10 : site.x;
+        const ly = site.y < CY ? site.y - 12 : site.y + 16;
+        return (
+          <g key={`n-${site.id || site.name}`}>
+            <circle cx={site.x} cy={site.y} r={7} fill="none" stroke={site.color} strokeWidth={0.5} opacity={0.4} />
+            <circle cx={site.x} cy={site.y} r={4} fill={site.color} opacity={0.9} />
+            <text x={lx} y={ly} textAnchor={anchor}
+              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, fill: "#A1A1AA", letterSpacing: "0.06em" }}>
+              {(site.name || "").toUpperCase()}
+            </text>
+          </g>
         );
       })}
 
-      {sites.map(site => {
-        const c = DOT_COLOR[site.status] || DOT_COLOR.unknown;
-        const isHQ = site.id === "novi";
-        const label = SHORT_LABEL[site.name] || site.name;
-        const isSelected = selectedId === site.id;
-        const hasIssue = site.status === "offline" || site.status === "degraded";
-        return (
-          <Marker key={site.id} coordinates={site.coordinates}
-            onClick={() => onSiteClick && onSiteClick(site)}>
-            {hasIssue && (
-              <circle r={isHQ ? 12 : 9} fill="none" stroke={c} strokeWidth={1} opacity={0.25}>
-                <animate attributeName="r" from={isHQ ? 7 : 5} to={isHQ ? 14 : 11} dur="1.8s" repeatCount="indefinite" />
-                <animate attributeName="opacity" from={0.3} to={0} dur="1.8s" repeatCount="indefinite" />
-              </circle>
-            )}
-            <circle r={isHQ ? 7 : 5}
-              fill={c} stroke={isSelected ? "#FAFAFA" : "#09090B"} strokeWidth={isSelected ? 2 : 1.5}
-              style={{ cursor: "pointer" }}
-            />
-            <text textAnchor="middle" y={-11}
-              style={{ fontSize: 8.5, fill: "#A1A1AA", fontFamily: "Inter, sans-serif", pointerEvents: "none", fontWeight: 500 }}>
-              {label}
-            </text>
-          </Marker>
-        );
-      })}
-    </ComposableMap>
+      {/* Azure hub */}
+      <g filter="url(#me-glow-cyan)">
+        <circle cx={CX} cy={CY} r={22} fill="none" stroke="#00E5FF" strokeWidth={0.5} opacity={0.2} />
+        <circle cx={CX} cy={CY} r={16} fill="none" stroke="#00E5FF" strokeWidth={1} opacity={0.35} />
+        <circle cx={CX} cy={CY} r={10} fill="#030305" stroke="#00E5FF" strokeWidth={1.5} />
+        <circle cx={CX} cy={CY} r={5}  fill="#00E5FF" opacity={0.85} />
+        <text x={CX} y={CY + 32} textAnchor="middle"
+          style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, fill: "#00E5FF", letterSpacing: "0.14em", fontWeight: 700 }}>
+          AZURE
+        </text>
+        <text x={CX} y={CY + 43} textAnchor="middle"
+          style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 7.5, fill: "#3A3A48", letterSpacing: "0.1em" }}>
+          CHICAGO
+        </text>
+      </g>
+    </svg>
   );
 }
