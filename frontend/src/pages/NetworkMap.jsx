@@ -160,41 +160,29 @@ export default function NetworkMap() {
               `}</style>
             </defs>
 
-            {/* Tunnel lines — two layers: base wire + flowing packets */}
+            {/* Tunnel lines — green unless WAN is DOWN */}
             {links.map((link, i) => {
               const src = SITES[link.src]?.coords;
               const dst = SITES[link.dst]?.coords;
               if (!src || !dst) return null;
-              const color     = STATUS_COLOR[link.status] || "#3A3A48";
-              const isDown    = link.status === "down";
-              const isDegraded= link.status === "degraded";
-              // Stagger speed slightly per tunnel so they don't all pulse in sync
-              const duration  = 1.6 + (i % 9) * 0.18;
-              const delay     = (i % 7) * 0.22;
+              const isDown   = link.status === "down";
+              const color    = isDown ? "#FF2A2A" : "#00FF66";
+              const duration = 1.6 + (i % 9) * 0.18;
+              const delay    = (i % 7) * 0.22;
               return (
                 <g key={i}>
-                  {/* Base wire — always visible */}
-                  <Line
-                    from={src} to={dst}
-                    stroke={color}
+                  <Line from={src} to={dst} stroke={color}
                     strokeWidth={isDown ? 1.2 : 0.6}
-                    strokeOpacity={isDown ? 0.55 : isDegraded ? 0.30 : 0.12}
-                    strokeLinecap="round"
-                  />
-                  {/* Flowing dashes — packets in transit (hidden when down) */}
+                    strokeOpacity={isDown ? 0.55 : 0.12}
+                    strokeLinecap="round" />
                   {!isDown && (
-                    <Line
-                      from={src} to={dst}
-                      stroke={color}
-                      strokeWidth={isDegraded ? 1.4 : 1.0}
-                      strokeOpacity={isDegraded ? 0.60 : 0.42}
-                      strokeDasharray="4 20"
-                      strokeLinecap="round"
+                    <Line from={src} to={dst} stroke={color}
+                      strokeWidth={1.0} strokeOpacity={0.42}
+                      strokeDasharray="4 20" strokeLinecap="round"
                       style={{
                         animation: `packet-flow ${duration}s linear infinite`,
                         animationDelay: `${delay}s`,
-                      }}
-                    />
+                      }} />
                   )}
                 </g>
               );
@@ -205,7 +193,7 @@ export default function NetworkMap() {
               const siteData   = siteStatusMap[name];
               const isCloud    = name === "Azure";
               const status     = siteData?.status || "unknown";
-              const colorKey   = status === "online" ? "up" : status === "offline" ? "down" : status === "degraded" ? "degraded" : "unknown";
+              const colorKey   = status === "online" ? "up" : status === "offline" ? "down" : "up";
               const color      = STATUS_COLOR[colorKey];
               const isSelected = selected?.name === name;
 

@@ -113,32 +113,23 @@ export default function MapEmbed({ sites = [] }) {
         }
       </Geographies>
 
-      {/* WAN lines: Novi → each site */}
+      {/* WAN lines: Novi → each site — green unless WAN is DOWN */}
       {wanLines.map(({ name, coords, status, i }) => {
-        const color = STATUS_COLOR[status] || STATUS_COLOR.unknown;
-        const dur   = 1.5 + (i % 8) * 0.18;
-        const del   = (i % 6) * 0.22;
-
+        const isDown = status === "down";
+        const color  = isDown ? "#FF2A2A" : "#00FF66";
+        const dur    = 1.5 + (i % 8) * 0.18;
+        const del    = (i % 6) * 0.22;
         return (
           <g key={`wan-${name}`}>
-            {/* Ghost base trace */}
             <Line from={hubCoords} to={coords}
-              stroke={color} strokeWidth={status === "down" ? 1.6 : 0.7}
-              opacity={status === "down" ? 0.28 : 0.13} />
-
-            {status === "up" && (
+              stroke={color} strokeWidth={isDown ? 1.6 : 0.7}
+              opacity={isDown ? 0.28 : 0.13} />
+            {!isDown && (
               <Line from={hubCoords} to={coords}
                 stroke={color} strokeWidth={1.4} strokeDasharray="5 19"
                 style={{ animation:`pkt-up ${dur}s ${del}s linear infinite`, opacity:.82 }} />
             )}
-
-            {status === "degraded" && (
-              <Line from={hubCoords} to={coords}
-                stroke={color} strokeWidth={1.2} strokeDasharray="4 10"
-                style={{ animation:`pkt-deg ${dur*1.4}s ${del}s linear infinite`, opacity:.72 }} />
-            )}
-
-            {status === "down" && (
+            {isDown && (
               <Line from={hubCoords} to={coords}
                 stroke={color} strokeWidth={1.8}
                 style={{ animation:`wan-down 1.8s ${del}s ease-in-out infinite`, opacity:.72 }} />
@@ -147,18 +138,18 @@ export default function MapEmbed({ sites = [] }) {
         );
       })}
 
-      {/* Novi → Azure cloud line (represents internet egress health) */}
+      {/* Novi → Azure cloud line — green unless all WANs are down */}
       {(() => {
-        const color = STATUS_COLOR[cloudStatus] || STATUS_COLOR.unknown;
-        const isUp  = cloudStatus === "up";
-        const isDeg = cloudStatus === "degraded";
-        const isDown= cloudStatus === "down";
+        const isDown = cloudStatus === "down";
+        const color  = isDown ? "#FF2A2A" : "#00FF66";
         return (
           <g key="wan-azure">
-            <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={isDown ? 1.8 : 0.8} opacity={isDown ? 0.28 : 0.13} strokeDasharray="2 6" />
-            {isUp  && <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.2} strokeDasharray="5 22" style={{ animation:"pkt-up 2.2s 0s linear infinite", opacity:.65 }} />}
-            {isDeg && <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.0} strokeDasharray="3 12" style={{ animation:"pkt-deg 3.2s 0s linear infinite", opacity:.58 }} />}
-            {isDown&& <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.8} style={{ animation:"wan-down 1.8s 0s ease-in-out infinite", opacity:.65 }} />}
+            <Line from={hubCoords} to={azureCoords} stroke={color}
+              strokeWidth={isDown ? 1.8 : 0.8} opacity={isDown ? 0.28 : 0.13} strokeDasharray="2 6" />
+            {!isDown && <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.2}
+              strokeDasharray="5 22" style={{ animation:"pkt-up 2.2s 0s linear infinite", opacity:.65 }} />}
+            {isDown  && <Line from={hubCoords} to={azureCoords} stroke={color} strokeWidth={1.8}
+              style={{ animation:"wan-down 1.8s 0s ease-in-out infinite", opacity:.65 }} />}
           </g>
         );
       })()}
