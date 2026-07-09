@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -38,28 +38,35 @@ function siteCoords(name) {
 }
 
 export default function NetworkMap() {
-  const [sites,   setSites]   = useState([]);
-  const [links,   setLinks]   = useState([]);
+  const [sites,    setSites]    = useState([]);
+  const [links,    setLinks]    = useState([]);
+  const [loadingSites, setLoadingSites] = useState(true);
+  const [loadingLinks, setLoadingLinks] = useState(true);
   const [selected, setSelected] = useState(null);
-  const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    try {
-      const [sRes, mRes] = await Promise.all([
-        axios.get(`${API}/sites`),
-        axios.get(`${API}/aruba/mesh`).catch(() => ({ data: [] })),
-      ]);
-      setSites(sRes.data);
-      setLinks(mRes.data);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+  // Load sites independently
+  useEffect(() => {
+    const fetchSites = () =>
+      axios.get(`${API}/sites`)
+        .then(r => setSites(r.data))
+        .catch(e => console.error("Sites load error:", e))
+        .finally(() => setLoadingSites(false));
+    fetchSites();
+    const iv = setInterval(fetchSites, 30000);
+    return () => clearInterval(iv);
   }, []);
 
+  // Load mesh links independently
   useEffect(() => {
-    load();
-    const iv = setInterval(load, 30000);
+    const fetchLinks = () =>
+      axios.get(`${API}/aruba/mesh`)
+        .then(r => setLinks(r.data))
+        .catch(e => console.error("Mesh load error:", e))
+        .finally(() => setLoadingLinks(false));
+    fetchLinks();
+    const iv = setInterval(fetchLinks, 30000);
     return () => clearInterval(iv);
-  }, [load]);
+  }, []);
 
   const statusBadge = (s) =>
     ({ online: "badge-green", degraded: "badge-amber", offline: "badge-red", unknown: "badge-zinc" }[s] || "badge-zinc");
@@ -90,15 +97,17 @@ export default function NetworkMap() {
       <div className="flex-1 grid gap-3 min-h-0" style={{ gridTemplateColumns: "1fr 290px" }}>
 
         {/* SVG Topology */}
-        <div className="card overflow-hidden" style={{ padding: 0 }}>
-          {loading ? (
-            <div className="skeleton h-full w-full" />
-          ) : (
-            <svg
-              data-testid="mesh-topology-svg"
-              viewBox="0 0 1000 580"
-              style={{ width: "100%", height: "100%", background: "transparent" }}
-            >
+        <div className="card overflow-hidden" style={{ padding: 0, position: "relative", minHeight: 200 }}>
+          {loadingLinks && (
+            <div style={{ position: "absolute", top: 8, right: 12, fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#3A3A48", zIndex: 2, letterSpacing: "0.1em" }}>
+              LOADING TUNNELS...
+            </div>
+          )}
+          <svg
+            data-testid="mesh-topology-svg"
+            viewBox="0 0 1000 580"
+            style={{ width: "100%", height: "100%", background: "transparent", display: "block", minHeight: 200 }}
+          >
               {/* Subtle state outline */}
               <text x="500" y="290" textAnchor="middle"
                 style={{ fontSize: 120, fontFamily: "JetBrains Mono", fill: "#1C1C24", fontWeight: 700, opacity: 0.3 }}
@@ -168,7 +177,6 @@ export default function NetworkMap() {
                 );
               })}
             </svg>
-          )}
         </div>
 
         {/* Site Panel */}
