@@ -88,13 +88,17 @@ export default function Dashboard() {
         axios.get(`${API}/dashboard/summary`),
         axios.get(`${API}/alerts`, { params: { acknowledged: false } }),
         axios.get(`${API}/vendor-status`),
-        axios.get(`${API}/tickets`),
+        axios.get(`${API}/vivantio/tickets`),
         axios.get(`${API}/sites`),
       ]);
       setSummary(s.data);
-      setAlerts(a.data.items.slice(0, 10));
-      setVendors(v.data);
-      setTickets(t.data.items.slice(0, 5));
+      // Only show critical and warning alerts — no info
+      const rawAlerts = a.data.items || [];
+      setAlerts(rawAlerts.filter(al => al.severity !== "info").slice(0, 10));
+      // vendor-status now returns { vendors, dd_status } — support both shapes
+      setVendors(Array.isArray(v.data) ? v.data : (v.data.vendors || []));
+      // Vivantio tickets — top 5 by priority
+      setTickets((t.data.tickets || []).slice(0, 5));
       setSites(si.data);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -289,7 +293,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Compact Tickets */}
+          {/* Compact Tickets — live from Vivantio */}
           <div className="card" style={{ height: 180, display: "flex", flexDirection: "column" }}>
             <div className="card-header">
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -298,12 +302,16 @@ export default function Dashboard() {
               </span>
             </div>
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {tickets.map(t => (
+              {tickets.length === 0 ? (
+                <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.3 }}>
+                  <div className="section-label">No Open Tickets</div>
+                </div>
+              ) : tickets.map(t => (
                 <div key={t.id} className="table-row" style={{ display: "flex", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #1C1C24" }}>
-                  <div style={{ width: 3, height: 16, background: PRI_COLOR[t.priority], marginRight: 12 }} />
+                  <div style={{ width: 3, height: 16, background: PRI_COLOR[t.priority?.toLowerCase()] || PRI_COLOR.low, marginRight: 12, flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, color: "#D4D4D8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-                    <div style={{ fontSize: 9, color: "#3A3A48" }}>{t.ticket_number} · {t.status.replace("_", " ")}</div>
+                    <div style={{ fontSize: 9, color: "#3A3A48" }}>{t.ticket_number || t.id} · {(t.status || "").replace("_", " ")}</div>
                   </div>
                   <ArrowRight size={10} style={{ color: "#1C1C24" }} />
                 </div>

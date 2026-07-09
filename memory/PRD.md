@@ -1,157 +1,106 @@
 # IT Command Center — PRD
 
 ## Original Problem Statement
-Create a dashboard in Python/React to display important information for IT at a glance.
-- Wazuh SIEM integration (consolidating UniFi, WUG, and HP alerts)
-- DIA Circuits overview
-- Ticket information (Vivantio)
-- Service status (Downdetector)
-- Run on wall-mounted Raspberry Pi (1920×1080) in kiosk mode
-- Top tab navigation (no sidebar) to maximize horizontal width
-- Live mesh map topology for locations connected via HP Aruba EdgeConnect
+Create a dashboard in Python/React to display important IT information at a glance for a wall-mounted Raspberry Pi (1920x1080 kiosk). Features: Wazuh SIEM, DIA circuits, Vivantio tickets, Downdetector service status, UniFi Devices (switches/APs). Cyberpunk NOC aesthetic. Top tab navigation. Auto-rotating kiosk. Live mesh map topology. Display-only (no interaction needed on wall display).
 
 ## Architecture
-
 ```
 /app/
 ├── backend/
-│   ├── server.py              # FastAPI app (Wazuh, Aruba, Vivantio, Downdetector, MongoDB)
-│   ├── requirements.txt
-│   └── .env
+│   ├── server.py           # FastAPI — all API routes, background tasks, YAML helpers
+│   ├── settings.yml        # ALL configuration (replaces MongoDB) — edit to configure
+│   ├── circuits.yml        # DIA circuit inventory — edit to add/remove circuits
+│   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── App.js
-│   │   ├── App.css / index.css
-│   │   ├── components/
-│   │   │   ├── Layout.jsx     # Kiosk rotation logic
-│   │   │   └── TopNav.jsx
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── NetworkMap.jsx     # Geographic mesh map — MI/OH/IN/IL, Azure in Chicago
-│   │   │   ├── Alerts.jsx
-│   │   │   ├── ServiceStatus.jsx  # Vendor status (Downdetector API)
-│   │   │   ├── DIACircuits.jsx
-│   │   │   ├── Tickets.jsx
-│   │   │   ├── WazuhPage.jsx
-│   │   │   └── Settings.jsx       # Includes Downdetector credentials section
-│   │   └── utils/api.js
-└── memory/
-    ├── PRD.md
-    └── test_credentials.md
+│   │   ├── pages/          # Dashboard, NetworkMap, Alerts, ServiceStatus, UniFiDevices, Tickets, Wazuh, Settings
+│   │   ├── components/     # MapEmbed.jsx, TopNav.jsx
+│   │   └── index.css       # JetBrains Mono global font
+│   └── tailwind.config.js
+├── memory/
+│   ├── PRD.md              # This file
+│   ├── test_credentials.md
+│   └── CHANGELOG.md
 ```
 
-## Key Tech Stack
-- React (CRA), Tailwind CSS, react-simple-maps v3.0.0 (US Atlas GeoJSON)
-- FastAPI, MongoDB, httpx (async HTTP)
-- HPE Aruba EdgeConnect Orchestrator API
-- Wazuh SIEM API (LAN-only, expected to fail in preview)
-- Vivantio ITSM REST API
-- Downdetector Enterprise API (OAuth2 client_credentials)
-
-## DB Schema (MongoDB)
-- settings: { wazuh_enabled, wazuh_url, wazuh_username, wazuh_password,
-              kiosk_enabled, kiosk_interval, aruba_api_url, aruba_api_key,
-              vivantio_api_url, vivantio_api_key, vivantio_password,
-              downdetector_client_id, downdetector_client_secret }
-- circuits: { circuit_id, bandwidth_mbps, status, provider, ip_address, site, notes }
-
----
+## Storage (MongoDB-free)
+- **settings.yml** — all credentials, API keys, feature flags. Edit directly or via Settings page.
+- **circuits.yml** — DIA circuit inventory. Edit directly. Persists across restarts.
+- **In-memory** — alerts (from WUG email), Vivantio cache, UniFi events ring buffer. Resets on restart (intentional — real data re-fetches from live sources).
 
 ## What's Been Implemented
 
-### Cyberpunk NOC UI ✅
-- Dark theme, neon glows, JetBrains Mono font, Cyberpunk aesthetic
+### Core Infrastructure
+- FastAPI backend, React/Tailwind frontend, Cyberpunk NOC aesthetic
+- JetBrains Mono font site-wide
+- Top tab navigation with kiosk auto-rotation support
+- 1920x1080 optimized layout
 
-### Kiosk Auto-Rotation ✅
-- Cycles pages every N seconds, configurable in Settings
+### Dashboard (Main NOC View)
+- 4 KPI cards: System Alerts, Network Availability, External Services, Response Queue
+- **Global Topology Mesh Map** (react-simple-maps):
+  - Hub-and-spoke DIA circuit lines: Novi (HQ) → each site
+  - Green flowing animated lines = circuit UP
+  - Red pulsing line = circuit DOWN
+  - Amber dashed animated line = circuit DEGRADED
+  - Aruba SD-WAN mesh overlay when available
+  - MI/OH/IN/IL primary states + WI/KY/PA/WV context borders
+- **Critical Event Stream** — real alerts from WUG email/Wazuh only; "All Systems Nominal" when empty
+- **Vendor Health Matrix** — 4-column grid with live status dots
+- **Incident Queue** — live from Vivantio (65+ tickets loaded)
+- **DIA Circuit Status Engine** — per-site colored badges at bottom
 
-### HPE Aruba EdgeConnect Integration ✅
-- `/api/aruba/mesh` — live SD-WAN tunnel links (cached 5 min)
-- `/api/aruba/status` — alarm summary
-- Background warmer warms cache at startup
+### Integrations
+| Integration | Status | Notes |
+|---|---|---|
+| Vivantio ITSM | ✅ LIVE | 65 active tickets; auto-refreshes every 60s |
+| Downdetector API | ⚠️ NEEDS CREDENTIALS | Enter client_id/secret in Settings → DOWNDETECTOR API. Token auto-rotates every 45min once configured. |
+| UniFi Network | ✅ CONFIGURED (LAN only) | noc-readonly@unifi.mimilk.com:8443; works when Pi is on local network |
+| Aruba EdgeConnect | ⚠️ NOT CONFIGURED | Needs aruba_api_url + aruba_api_key in Settings |
+| Wazuh SIEM | ⚠️ NOT CONFIGURED | LAN IP 10.202.10.70; works when Pi is on local network |
+| WUG Email Alerts | ⚠️ NOT CONFIGURED | Needs IMAP credentials in Settings |
 
-### Geographic Network Map ✅ (Michigan / Ohio / Indiana / Illinois)
-- States: MI, OH, IN, IL (primary); WI, KY, PA, WV (context)
-- Projection: scale=4500, center=[-84.8, 42.4]
-- 9 nodes: 8 physical sites + Azure (Chicago, IL at [-87.63, 41.88])
-- Azure box shows "AZURE / CHICAGO" label
-- 36 live SD-WAN tunnel lines with animated flowing packet effect
+### Vendor Status (ServiceStatus page)
+- 21 vendors across Security, Microsoft, AI, Cloud, Telecom, Other
+- Fixed Downdetector slugs: `teams` (Teams), `google-bard` (Gemini), `claude` (Anthropic), `microsoft-dynamics-365`
+- Fallback to public Statuspage.io APIs for: Cloudflare, OpenAI, Keeper, UniFi, CrowdStrike, Anthropic
+- HTTP follow_redirects=True + verify=False applied to all status checks
+- **DD token status badge** in UI showing: active/pending/not-configured + minutes to next refresh
 
-### Vivantio ITSM Integration ✅
-- Live tickets via POST /api/Ticket/SelectList
-- Background cache warmer every 60s
-- Priority normalization (Critical/High/Medium/Low)
+### UniFi Devices Page
+- Auto-detect UniFi OS vs Legacy API
+- Devices grouped by type (Switch, AP, Camera, etc.)
+- Offline devices sorted to TOP of each group
+- ?demo=true query param for UI preview without live controller
 
-### DIA Circuit Bandwidth Fix ✅
-- MongoDB is source of truth for static fields (bandwidth, provider, IP, circuit_id)
-- Aruba only contributes `status` per site
-- Cache invalidated on circuit CRUD operations
+### Alerts Page
+- Default: unacknowledged + Critical/Warning only (no Info)
+- Acknowledge → removes from default view
+- All alerts come from real sources only (WUG email, Wazuh, manual)
 
-### UniFi Devices Tab ✅ (2026-07-09)
-- New `/unifi-devices` route + nav tab
-- Auto-detects UniFi OS vs Legacy API path
-- 2 controllers configurable in Settings → UNIFI CONTROLLERS
-- background_unifi_warmer() polls every 60s
-- Devices grouped by type: cameras, switches, APs, gateways
+## Pending / Upcoming Work
 
-### Gemini 3 Flash Dashboard Redesign ✅ (2026-07-09)
-- Left column: MapEmbed (hub-and-spoke SVG) + DIA Circuit strip
-- Right column: Alert stream + Vendor Health Matrix (4-col dot grid) + Ticket queue
-- 4 dramatic KPI cards at top (alerts, availability %, services, tickets)
-- MapEmbed.jsx: pure SVG, no GeoJSON dependency
+### P1 — Next
+- Enter Downdetector client_id + client_secret in settings.yml or Settings page to unlock all 21 vendor status feeds
+- Raspberry Pi deployment instructions + start.sh script
 
-### Downdetector API Integration ✅
-- OAuth2 client_credentials flow: POST /tokens → Bearer token
-- Background `background_dd_token_refresher()` runs every 45 minutes (proactive refresh)
-  - Reads credentials from MongoDB each cycle (picks up Settings changes automatically)
-  - Uses `force=True` to always generate a fresh token
-- Company ID lookup via `GET /slugs/{slug}/companies` (slug-based, not text search)
-- Correct slugs confirmed:
-  - CrowdStrike → "crowdstrike"
-  - NinjaOne → "ninjaone"
-  - Zscaler → "zscaler"
-  - Microsoft 365 → "microsoft-365"
-  - Dynamics 365 → "microsoft-dynamics"
-- Status mapped: success→operational, warning→minor_outage, danger→major_outage
-- Fallback to public Statuspage.io when DD not configured
-- Settings page has "DOWNDETECTOR API" section (CLIENT ID + CLIENT SECRET)
-
----
-
-## Prioritized Backlog
-
-### P1 — Next Sprint
-- [ ] Migrate settings from MongoDB to flat `settings.yml` file
-  - Removes MongoDB dependency for Raspberry Pi deployment
-
-### P2
-- [ ] Raspberry Pi deployment script (`start.sh` / `install.sh`)
+### P2 — Soon
+- Automated DIA circuit ping check every 60s → auto-flip status to DOWN if ICMP unreachable
+- Wazuh configuration (needs credentials for 10.202.10.70)
+- WUG email IMAP configuration
 
 ### P3 — Backlog
-- [ ] Automated DIA circuit ping check every 60s → auto-flip status to DOWN
-- [ ] Dashboard KPIs wired to Wazuh summary
-- [ ] Alerts page live data from Wazuh
-
----
+- UniFi Protect camera API integration (separate from Network controller)
+- Kiosk auto-rotation testing on actual Pi hardware
+- Alerts persistence across restarts (optional flat file)
 
 ## Key API Endpoints
-- GET  `/api/settings`          — load settings (hides passwords/secrets)
-- PUT  `/api/settings`          — save settings
-- GET  `/api/sites`             — 8 physical sites + Aruba circuit status
-- GET  `/api/aruba/mesh`        — SD-WAN mesh links (cached 5 min)
-- GET  `/api/circuits`          — DIA circuits (MongoDB + Aruba status overlay)
-- GET  `/api/vivantio/tickets`  — Vivantio live tickets (cached 60s)
-- GET  `/api/vendor-status`     — Vendor health via Downdetector (with fallback)
-
----
-
-## Important Notes for Next Agent
-- **Wazuh**: LAN IP `10.202.10.70` always fails in preview — expected, not a bug.
-- **Aruba Cache**: Background warmer every 5 min. TTL = 5 min.
-- **DIA Circuits**: MongoDB is source of truth. Aruba only gives `status`.
-- **Downdetector**: Enterprise API. Credentials stored in MongoDB settings.
-  Token auto-refreshed every 45 min by `background_dd_token_refresher()`.
-  Company IDs resolved via `/slugs/{slug}/companies`, cached per process.
-- **Azure Node**: Moved to Chicago, IL — Microsoft Azure Central US region.
-  Coords: [-87.63, 41.88]. Map now includes Illinois as a primary state.
-- **react-simple-maps**: v3.0.0, GeoJSON from us-atlas@3 CDN.
+- `GET /api/dashboard/summary` — KPI counts
+- `GET /api/circuits` — DIA circuits (from circuits.yml, Aruba status overlay if connected)
+- `GET /api/sites` — site status with coordinates for map
+- `GET /api/alerts?acknowledged=false` — active alerts
+- `GET /api/vivantio/tickets` — live Vivantio tickets
+- `GET /api/vendor-status` — 21 vendor statuses + DD token state
+- `GET /api/unifi/devices[?demo=true]` — UniFi devices from controller(s)
+- `GET /api/aruba/mesh` — SD-WAN tunnel topology
+- `GET/PUT /api/settings` — read/write settings.yml

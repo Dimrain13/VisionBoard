@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { ExternalLink, RefreshCw } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { ExternalLink, RefreshCw, Zap, ZapOff } from "lucide-react";
+import { format } from "date-fns";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -10,14 +10,15 @@ const STATUS_CFG = {
   minor_outage: { label: "MINOR ISSUE",  color: "#FFB014", badge: "badge-amber", dot: "dot-degraded" },
   major_outage: { label: "MAJOR OUTAGE", color: "#FF2A2A", badge: "badge-red",   dot: "dot-offline"  },
   maintenance:  { label: "MAINTENANCE",  color: "#00E5FF", badge: "badge-blue",  dot: "dot-unknown"  },
-  unknown:      { label: "UNKNOWN",      color: "#3A3A48", badge: "badge-zinc",  dot: "dot-unknown"  },
+  unknown:      { label: "NO DATA",      color: "#3A3A48", badge: "badge-zinc",  dot: "dot-unknown"  },
 };
 
 const CATEGORY_ORDER = ["Security", "Microsoft", "AI", "Cloud", "Telecom", "Other"];
 
 export default function ServiceStatus() {
-  const [vendors, setVendors] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [vendors, setVendors]     = useState([]);
+  const [ddStatus, setDdStatus]   = useState(null);
+  const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
@@ -25,7 +26,13 @@ export default function ServiceStatus() {
     if (manual) setRefreshing(true);
     try {
       const res = await axios.get(`${API}/vendor-status`);
-      setVendors(res.data);
+      // Support both old (array) and new (object with vendors/dd_status) shapes
+      if (Array.isArray(res.data)) {
+        setVendors(res.data);
+      } else {
+        setVendors(res.data.vendors || []);
+        setDdStatus(res.data.dd_status || null);
+      }
       setLastRefresh(new Date());
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
@@ -38,8 +45,8 @@ export default function ServiceStatus() {
     : vendors.some(v => v.status === "major_outage") ? "major_outage" : "minor_outage";
 
   const oCfg = STATUS_CFG[overall] || STATUS_CFG.unknown;
+  const knownCount = vendors.filter(v => v.status !== "unknown").length;
 
-  // Group vendors by category in defined order
   const grouped = CATEGORY_ORDER.reduce((acc, cat) => {
     const items = vendors.filter(v => v.category === cat);
     if (items.length) acc[cat] = items;
@@ -58,6 +65,34 @@ export default function ServiceStatus() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
+          {/* Downdetector token status badge */}
+          {ddStatus && (
+            <div className="flex items-center gap-1.5 card px-2 py-1" title={
+              ddStatus.configured
+                ? ddStatus.token_active
+                  ? `Token active — refreshes in ~${Math.round((ddStatus.next_refresh_in_s || 0) / 60)}m`
+                  : "Token expired or not yet fetched"
+                : "Enter client_id + secret in Settings → DOWNDETECTOR API"
+            }>
+              {ddStatus.configured && ddStatus.token_active
+                ? <Zap size={9} style={{ color: "#00FF66" }} />
+                : <ZapOff size={9} style={{ color: ddStatus.configured ? "#FFB014" : "#3A3A48" }} />
+              }
+              <span style={{
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5,
+                color: ddStatus.configured && ddStatus.token_active ? "#00FF66"
+                     : ddStatus.configured ? "#FFB014"
+                     : "#3F3F46",
+                letterSpacing: "0.1em",
+              }}>
+                {ddStatus.configured && ddStatus.token_active
+                  ? `DD ACTIVE · ~${Math.round((ddStatus.next_refresh_in_s || 0) / 60)}m`
+                  : ddStatus.configured
+                    ? "DD TOKEN PENDING"
+                    : "DD NOT CONFIGURED"}
+              </span>
+            </div>
+          )}
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: "#27272A", letterSpacing: "0.08em" }}>
             CHK {format(lastRefresh, "HH:mm:ss")}
           </span>
@@ -79,10 +114,11 @@ export default function ServiceStatus() {
         <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, color: oCfg.color, letterSpacing: "0.18em" }}>
           {overall === "operational" ? "ALL VENDOR SYSTEMS OPERATIONAL"
             : overall === "major_outage" ? "MAJOR SERVICE DISRUPTION DETECTED"
+            : knownCount === 0 ? "AWAITING DOWNDETECTOR CREDENTIALS"
             : "MINOR SERVICE ISSUES DETECTED"}
         </span>
         <span style={{ marginLeft: "auto", fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#3F3F46" }}>
-          {vendors.filter(v => v.status === "operational").length} / {vendors.length} OPERATIONAL
+          {knownCount > 0 ? `${vendors.filter(v => v.status === "operational").length} / ${vendors.length} OPERATIONAL` : `${knownCount} / ${vendors.length} MONITORED`}
         </span>
       </div>
 
@@ -102,6 +138,7 @@ export default function ServiceStatus() {
                 <div className="grid grid-cols-5 gap-2">
                   {items.map(vendor => {
                     const cfg = STATUS_CFG[vendor.status] || STATUS_CFG.unknown;
+                    const needsDD = vendor.status === "unknown" && !vendor.status_url;
                     return (
                       <div key={vendor.id} data-testid={`vendor-card-${vendor.id}`}
                         className="card p-3" style={{ borderLeft: `2px solid ${cfg.color}` }}>
@@ -118,21 +155,32 @@ export default function ServiceStatus() {
                         </div>
                         <div className="flex items-center gap-1.5 mb-2">
                           <div className="relative flex" style={{ width: 6, height: 6 }}>
-                            {vendor.status !== "operational" && (
+                            {vendor.status !== "operational" && vendor.status !== "unknown" && (
                               <div className={`absolute inline-flex opacity-75 ping ${cfg.dot}`} style={{ width: 6, height: 6 }} />
                             )}
                             <div className={`relative inline-flex ${cfg.dot}`} style={{ width: 6, height: 6 }} />
                           </div>
                           <span className={`badge ${cfg.badge}`} style={{ fontSize: 8 }}>{cfg.label}</span>
                         </div>
-                        <p style={{ fontSize: 10, color: "#3F3F46", lineHeight: 1.5 }} className="line-clamp-2">{vendor.description}</p>
-                        <div style={{ marginTop: 8, fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, color: "#1F1F23", letterSpacing: "0.06em" }}>
-                          {vendor.last_checked ? format(parseISO(vendor.last_checked), "HH:mm:ss") : "—"}
+                        {/* Source badge */}
+                        <div style={{ marginBottom: 4 }}>
+                          {vendor.source === "downdetector" ? (
+                            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 7.5, color: "#00B4D8", letterSpacing: "0.08em" }}>DD ↑</span>
+                          ) : vendor.source === "statuspage" ? (
+                            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 7.5, color: "#52525B", letterSpacing: "0.08em" }}>STATUSPAGE</span>
+                          ) : needsDD ? (
+                            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 7.5, color: "#3F3F46", letterSpacing: "0.08em" }}>NEEDS DD</span>
+                          ) : (
+                            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 7.5, color: "#27272A", letterSpacing: "0.08em" }}>—</span>
+                          )}
+                        </div>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, color: "#1F1F23", letterSpacing: "0.06em" }}>
+                          {vendor.last_checked ? format(new Date(vendor.last_checked), "HH:mm:ss") : "—"}
                         </div>
                       </div>
                     );
                   })}
-                  {/* Append IsItDown card at end of last category */}
+                  {/* IsItDown card at end of last category */}
                   {cat === Object.keys(grouped).at(-1) && (
                     <div className="card p-3">
                       <div className="flex items-start justify-between mb-2">

@@ -285,34 +285,38 @@ async def _wazuh_fetch_agents(settings: dict) -> list:
 
 
 # ─── Vendor Status ────────────────────────────────────────────────
+# status_url: public Statuspage.io JSON endpoint (fallback when no DD token).
+#   - Set to None for services with no public API or those that require auth.
+#   - Downdetector is always tried first when credentials are configured.
+# dd_slug: slug used by Downdetector — matches the path segment on downdetector.com/status/{slug}/
 VENDORS = [
     # ── Security & Endpoint ────────────────────────────────────────────────────────
-    {"id": "crowdstrike",  "name": "CrowdStrike",         "category": "Security",  "dd_slug": "crowdstrike",         "status_url": "https://status.crowdstrike.com/api/v2/summary.json",   "web_url": "https://status.crowdstrike.com"},
-    {"id": "ninjaone",     "name": "NinjaOne",             "category": "Security",  "dd_slug": "ninjaone",            "status_url": "https://status.ninjarmm.com/api/v2/summary.json",      "web_url": "https://status.ninjarmm.com"},
-    {"id": "zscaler",      "name": "Zscaler",              "category": "Security",  "dd_slug": "zscaler",             "status_url": "https://trust.zscaler.com/api/v2/summary.json",        "web_url": "https://trust.zscaler.com"},
-    {"id": "keeper",       "name": "Keeper",               "category": "Security",  "dd_slug": "keeper",              "status_url": "https://statuspage.keeper.io/api/v2/summary.json",     "web_url": "https://statuspage.keeper.io"},
-    {"id": "mimecast",     "name": "Mimecast",             "category": "Security",  "dd_slug": "mimecast",            "status_url": "https://status.mimecast.com/api/v2/summary.json",      "web_url": "https://status.mimecast.com"},
-    {"id": "cloudflare",   "name": "Cloudflare",           "category": "Security",  "dd_slug": "cloudflare",          "status_url": "https://www.cloudflarestatus.com/api/v2/summary.json", "web_url": "https://www.cloudflarestatus.com"},
-    # ── Microsoft 365 ─────────────────────────────────────────────────────────────
-    {"id": "microsoft365", "name": "Microsoft 365",        "category": "Microsoft", "dd_slug": "microsoft-365",       "status_url": "https://status.office365.com/api/v2/summary.json",     "web_url": "https://status.office365.com"},
-    {"id": "dynamics365",  "name": "Dynamics 365",         "category": "Microsoft", "dd_slug": "microsoft-dynamics",  "status_url": None,                                                    "web_url": "https://admin.powerplatform.microsoft.com/"},
-    {"id": "outlook",      "name": "Outlook",              "category": "Microsoft", "dd_slug": "outlook",             "status_url": "https://status.office365.com/api/v2/summary.json",     "web_url": "https://status.office365.com"},
-    {"id": "teams",        "name": "Microsoft Teams",      "category": "Microsoft", "dd_slug": "microsoft-teams",     "status_url": "https://status.office365.com/api/v2/summary.json",     "web_url": "https://status.office365.com"},
+    {"id": "crowdstrike",  "name": "CrowdStrike",         "category": "Security",  "dd_slug": "crowdstrike",              "status_url": "https://status.crowdstrike.com/api/v2/summary.json",   "web_url": "https://status.crowdstrike.com"},
+    {"id": "ninjaone",     "name": "NinjaOne",             "category": "Security",  "dd_slug": "ninjaone",                 "status_url": None,                                                    "web_url": "https://status.ninjarmm.com"},
+    {"id": "zscaler",      "name": "Zscaler",              "category": "Security",  "dd_slug": "zscaler",                  "status_url": None,                                                    "web_url": "https://trust.zscaler.com"},
+    {"id": "keeper",       "name": "Keeper",               "category": "Security",  "dd_slug": "keeper",                   "status_url": "https://statuspage.keeper.io/api/v2/summary.json",     "web_url": "https://statuspage.keeper.io"},
+    {"id": "mimecast",     "name": "Mimecast",             "category": "Security",  "dd_slug": "mimecast",                 "status_url": None,                                                    "web_url": "https://status.mimecast.com"},
+    {"id": "cloudflare",   "name": "Cloudflare",           "category": "Security",  "dd_slug": "cloudflare",               "status_url": "https://www.cloudflarestatus.com/api/v2/summary.json", "web_url": "https://www.cloudflarestatus.com"},
+    # ── Microsoft 365 — no public JSON API; relies entirely on Downdetector ────────
+    {"id": "microsoft365", "name": "Microsoft 365",        "category": "Microsoft", "dd_slug": "microsoft-365",            "status_url": None,                                                    "web_url": "https://status.office365.com"},
+    {"id": "dynamics365",  "name": "Dynamics 365",         "category": "Microsoft", "dd_slug": "microsoft-dynamics-365",   "status_url": None,                                                    "web_url": "https://admin.powerplatform.microsoft.com/"},
+    {"id": "outlook",      "name": "Outlook",              "category": "Microsoft", "dd_slug": "outlook",                  "status_url": None,                                                    "web_url": "https://status.office365.com"},
+    {"id": "teams",        "name": "Microsoft Teams",      "category": "Microsoft", "dd_slug": "teams",                    "status_url": None,                                                    "web_url": "https://status.office365.com"},
     # ── AI Services ───────────────────────────────────────────────────────────────
-    {"id": "openai",       "name": "OpenAI",               "category": "AI",        "dd_slug": "openai",              "status_url": "https://status.openai.com/api/v2/summary.json",        "web_url": "https://status.openai.com"},
-    {"id": "gemini",       "name": "Google Gemini",        "category": "AI",        "dd_slug": "google-gemini",       "status_url": None,                                                    "web_url": "https://gemini.google.com"},
-    {"id": "claude",       "name": "Claude (Anthropic)",   "category": "AI",        "dd_slug": "anthropic",           "status_url": "https://status.anthropic.com/api/v2/summary.json",     "web_url": "https://status.anthropic.com"},
+    {"id": "openai",       "name": "OpenAI",               "category": "AI",        "dd_slug": "openai",                   "status_url": "https://status.openai.com/api/v2/summary.json",        "web_url": "https://status.openai.com"},
+    {"id": "gemini",       "name": "Google Gemini",        "category": "AI",        "dd_slug": "google-bard",              "status_url": None,                                                    "web_url": "https://gemini.google.com"},
+    {"id": "claude",       "name": "Claude (Anthropic)",   "category": "AI",        "dd_slug": "claude",                   "status_url": "https://status.anthropic.com/api/v2/summary.json",     "web_url": "https://anthropicstatus.com"},
     # ── Cloud & Infrastructure ────────────────────────────────────────────────────
-    {"id": "aws",          "name": "AWS",                  "category": "Cloud",     "dd_slug": "amazon-web-services", "status_url": None,                                                    "web_url": "https://health.aws.amazon.com/health/status"},
-    {"id": "google",       "name": "Google",               "category": "Cloud",     "dd_slug": "google",              "status_url": None,                                                    "web_url": "https://workspace.google.com/status"},
-    {"id": "unifi",        "name": "UniFi (Ubiquiti)",     "category": "Cloud",     "dd_slug": "ubiquiti",            "status_url": "https://status.ui.com/api/v2/summary.json",            "web_url": "https://status.ui.com"},
+    {"id": "aws",          "name": "AWS",                  "category": "Cloud",     "dd_slug": "amazon-web-services",      "status_url": None,                                                    "web_url": "https://health.aws.amazon.com/health/status"},
+    {"id": "google",       "name": "Google",               "category": "Cloud",     "dd_slug": "google",                   "status_url": None,                                                    "web_url": "https://workspace.google.com/status"},
+    {"id": "unifi",        "name": "UniFi (Ubiquiti)",     "category": "Cloud",     "dd_slug": "ubiquiti",                 "status_url": "https://status.ui.com/api/v2/summary.json",            "web_url": "https://status.ui.com"},
     # ── Telecom ───────────────────────────────────────────────────────────────────
-    {"id": "att",          "name": "AT&T",                 "category": "Telecom",   "dd_slug": "att",                 "status_url": None,                                                    "web_url": "https://downdetector.com/status/att/"},
-    {"id": "verizon",      "name": "Verizon",              "category": "Telecom",   "dd_slug": "verizon",             "status_url": None,                                                    "web_url": "https://downdetector.com/status/verizon/"},
-    {"id": "tmobile",      "name": "T-Mobile",             "category": "Telecom",   "dd_slug": "t-mobile",            "status_url": None,                                                    "web_url": "https://downdetector.com/status/t-mobile/"},
+    {"id": "att",          "name": "AT&T",                 "category": "Telecom",   "dd_slug": "att",                      "status_url": None,                                                    "web_url": "https://downdetector.com/status/att/"},
+    {"id": "verizon",      "name": "Verizon",              "category": "Telecom",   "dd_slug": "verizon",                  "status_url": None,                                                    "web_url": "https://downdetector.com/status/verizon/"},
+    {"id": "tmobile",      "name": "T-Mobile",             "category": "Telecom",   "dd_slug": "t-mobile",                 "status_url": None,                                                    "web_url": "https://downdetector.com/status/t-mobile/"},
     # ── Consumer / Finance ────────────────────────────────────────────────────────
-    {"id": "apple",        "name": "Apple",                "category": "Other",     "dd_slug": "apple",               "status_url": None,                                                    "web_url": "https://www.apple.com/support/systemstatus/"},
-    {"id": "chase",        "name": "J.P. Morgan Chase",    "category": "Other",     "dd_slug": "chase",               "status_url": None,                                                    "web_url": "https://downdetector.com/status/chase/"},
+    {"id": "apple",        "name": "Apple",                "category": "Other",     "dd_slug": "apple",                    "status_url": None,                                                    "web_url": "https://www.apple.com/support/systemstatus/"},
+    {"id": "chase",        "name": "J.P. Morgan Chase",    "category": "Other",     "dd_slug": "chase",                    "status_url": None,                                                    "web_url": "https://downdetector.com/status/chase/"},
 ]
 
 # ─── Downdetector API helpers ──────────────────────────────────────────────────
@@ -388,13 +392,14 @@ async def check_vendor_status(vendor: dict, dd_token: Optional[str]) -> dict:
     vendor_id   = vendor["id"]
     status      = "unknown"
     source      = "none"
+    now_iso     = datetime.now(timezone.utc).isoformat()
 
-    # 1. Try Downdetector Enterprise API
+    # 1. Try Downdetector Enterprise API (highest fidelity — crowd-sourced realtime)
     if dd_token and vendor.get("dd_slug"):
         try:
             company_id = await _dd_get_company_id(vendor_id, vendor["dd_slug"], dd_token)
             if company_id:
-                async with httpx.AsyncClient(timeout=8) as c:
+                async with httpx.AsyncClient(timeout=8, verify=False, follow_redirects=True) as c:
                     r = await c.get(
                         f"https://downdetectorapi.com/v2/companies/{company_id}/status/current",
                         headers={"Authorization": f"Bearer {dd_token}"}
@@ -403,24 +408,27 @@ async def check_vendor_status(vendor: dict, dd_token: Optional[str]) -> dict:
                         dd_status = r.json().get("status", "")
                         status = {"success": "operational", "warning": "minor_outage", "danger": "major_outage"}.get(dd_status, "unknown")
                         source = "downdetector"
-                        return {**vendor, "status": status, "source": source}
-        except Exception:
-            pass
+                        return {**vendor, "status": status, "source": source, "last_checked": now_iso}
+        except Exception as e:
+            logger.debug(f"DD check failed for {vendor_id}: {e}")
 
-    # 2. Fall back to public statuspage.io
+    # 2. Fall back to public Statuspage.io JSON endpoint
     if vendor.get("status_url"):
         try:
-            async with httpx.AsyncClient(timeout=6) as c:
+            async with httpx.AsyncClient(timeout=7, verify=False, follow_redirects=True) as c:
                 r = await c.get(vendor["status_url"])
                 if r.status_code == 200:
-                    data = r.json()
-                    ind = data.get("status", {}).get("indicator", "unknown")
-                    status = {"none": "operational", "minor": "minor_outage", "major": "major_outage", "critical": "major_outage"}.get(ind, "unknown")
+                    body = r.json()
+                    ind = body.get("status", {}).get("indicator", "unknown")
+                    status = {
+                        "none": "operational", "minor": "minor_outage",
+                        "major": "major_outage", "critical": "major_outage"
+                    }.get(ind, "unknown")
                     source = "statuspage"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Statuspage check failed for {vendor_id}: {e}")
 
-    return {**vendor, "status": status, "source": source}
+    return {**vendor, "status": status, "source": source, "last_checked": now_iso}
 
 
 # ─── UniFi Network Controller ─────────────────────────────────────────────────
@@ -524,15 +532,8 @@ def seed_demo_data():
     # Alerts are NOT pre-seeded — they come from WUG email polling, Wazuh, or manual entry.
     # This avoids showing phantom/stale alerts on the NOC wall display.
 
-    if not _tickets_store:
-        ts = now.isoformat()
-        _tickets_store.extend([
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1041", "title": "Replace failing HDD on REMUS-FS01", "description": "SMART errors detected. Users reporting slow file access.", "priority": "high", "status": "open", "category": "Hardware", "assigned_to": "John D.", "site": "Remus", "source": "manual", "created_at": (now - timedelta(days=1)).isoformat(), "updated_at": ts},
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1042", "title": "Investigate packet loss at Constantine", "description": "Users reporting intermittent connectivity. Packet loss on WAN circuit.", "priority": "critical", "status": "in_progress", "category": "Network", "assigned_to": "Sarah M.", "site": "Constantine", "source": "manual", "created_at": (now - timedelta(hours=6)).isoformat(), "updated_at": ts},
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1043", "title": "Setup workstations - 3 new hires Novi", "description": "3 new workstations for IT dept expansion.", "priority": "medium", "status": "in_progress", "category": "Hardware", "assigned_to": "Mike R.", "site": "Novi", "source": "manual", "created_at": (now - timedelta(days=2)).isoformat(), "updated_at": ts},
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1044", "title": "SSL Certificate renewal - internal portal", "description": "Certificate expires in 15 days. Renew and deploy to web servers.", "priority": "medium", "status": "open", "category": "Security", "assigned_to": None, "site": None, "source": "manual", "created_at": (now - timedelta(days=3)).isoformat(), "updated_at": ts},
-            {"id": str(uuid.uuid4()), "ticket_number": "TKT-1045", "title": "Printer setup - Canton Warehouse", "description": "New HP LaserJet Pro needs to be added to network print server.", "priority": "low", "status": "open", "category": "Hardware", "assigned_to": None, "site": "Canton Warehouse", "source": "manual", "created_at": (now - timedelta(days=4)).isoformat(), "updated_at": ts},
-        ])
+    # Tickets are not pre-seeded — real tickets come from Vivantio (auto-refreshed every 60s).
+    # Local /api/tickets CRUD is available for manually created tickets.
 
     if not _unifi_events_store:
         _unifi_events_store.extend([
@@ -1017,9 +1018,17 @@ async def get_vendor_status():
     if dd_id and dd_secret:
         dd_token = await _dd_get_token(dd_id, dd_secret)
 
+    # Build token health info for the UI
+    now = time.time()
+    dd_status = {
+        "configured": bool(dd_id and dd_secret),
+        "token_active": bool(_dd_token_cache.get("token") and now < _dd_token_cache.get("expires_at", 0)),
+        "next_refresh_in_s": max(0, int(_dd_token_cache.get("expires_at", 0) - now - 60)) if _dd_token_cache.get("expires_at") else None,
+    }
+
     tasks = [check_vendor_status(v, dd_token) for v in VENDORS]
     results = await asyncio.gather(*tasks)
-    return list(results)
+    return {"vendors": list(results), "dd_status": dd_status}
 
 
 # ─── Sites ────────────────────────────────────────────────────────
@@ -1211,54 +1220,84 @@ _vivantio_cache: dict = {"tickets": None, "ts": 0, "max_id": 27400}
 VIVANTIO_CACHE_TTL = 60
 
 VIVANTIO_PRIORITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+VIVANTIO_CLOSED_STATUSES = {"Closed", "Resolved", "Cancelled", "Canceled", "Complete", "Completed"}
 
-_PRIORITY_MAP = {
-    "1": "Critical", "critical": "Critical",
-    "2": "High",     "high": "High",
-    "3": "Medium",   "medium": "Medium", "standard": "Medium",
-    "4": "Low",      "low": "Low",
-}
+def _normalize_priority(raw: str) -> str:
+    if not raw:
+        return "Medium"
+    m = {"critical": "Critical", "1": "Critical",
+         "high": "High", "2": "High",
+         "medium": "Medium", "3": "Medium", "standard": "Medium",
+         "low": "Low", "4": "Low"}
+    return m.get(raw.lower(), "Medium")
+
+
+async def _vivantio_request(url: str, username: str, password: str, path: str, body=None):
+    """Authenticated POST to the Vivantio API."""
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=20, verify=False) as client:
+        r = await client.post(f"{url.rstrip('/')}/api/{path}", headers=headers, json=body or {})
+        r.raise_for_status()
+        return r.json()
+
+
+async def _vivantio_find_max_id(url: str, username: str, password: str, start: int) -> int:
+    """Binary-search the highest existing Vivantio ticket ID from start."""
+    step = 100
+    current = start
+    for _ in range(20):
+        data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{current + step}")
+        if data.get("Found"):
+            current += step
+        else:
+            break
+    lo, hi = current, current + step
+    for _ in range(10):
+        if hi - lo <= 1:
+            break
+        mid = (lo + hi) // 2
+        data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{mid}")
+        if data.get("Found"):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
 
 async def _vivantio_fetch_tickets(url: str, username: str, password: str) -> list:
-    """Fetch active tickets from Vivantio. Uses ID-range polling strategy."""
-    auth = base64.b64encode(f"{username}:{password}".encode()).decode()
-    hdrs = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
-    base = url.rstrip("/")
+    """Scan last 200 ticket IDs; return active (non-closed) tickets sorted by priority."""
     max_id = _vivantio_cache["max_id"]
 
-    async with httpx.AsyncClient(timeout=20, verify=False) as c:
-        # Page through IDs in chunks of 500 to find all active tickets
-        id_batches = list(range(max_id - 2000, max_id + 100, 500))
-        all_ids: list[int] = []
-        for start in id_batches:
-            ids = list(range(start, start + 500))
-            r = await c.post(f"{base}/api/Ticket/SelectList", headers=hdrs, json=ids)
-            if r.status_code != 200:
-                continue
-            batch = r.json()
-            for t in batch:
-                tid = t.get("Id") or t.get("id")
-                if tid:
-                    all_ids.append(int(tid))
-                    if int(tid) > max_id:
-                        max_id = int(tid)
+    # Probe ahead to find the latest ticket ID
+    probe = max_id + 50
+    data = await _vivantio_request(url, username, password, f"Ticket/SelectById/{probe}")
+    if data.get("Found"):
+        max_id = await _vivantio_find_max_id(url, username, password, probe)
+        _vivantio_cache["max_id"] = max_id
 
-    _vivantio_cache["max_id"] = max_id
+    # Batch-fetch last 200 IDs — API returns {"Results": [...]}
+    ids = list(range(max_id, max(max_id - 200, 0), -1))
+    raw = await _vivantio_request(url, username, password, "Ticket/SelectList", ids)
+    all_tickets = raw.get("Results", []) if isinstance(raw, dict) else []
 
     active = []
-    for t in (await _vivantio_all_tickets(url, username, password, all_ids)):
-        status_raw = (t.get("StatusName") or t.get("Status") or "").lower()
-        if status_raw in ("closed", "resolved", "cancelled", "canceled", "complete", "completed"):
+    for t in all_tickets:
+        if not isinstance(t, dict):
             continue
-        priority_raw = str(t.get("PriorityName") or t.get("Priority") or "4").lower()
-        priority = _PRIORITY_MAP.get(priority_raw, "Medium")
+        if t.get("StatusType") == 4:
+            continue
+        if t.get("StatusName") in VIVANTIO_CLOSED_STATUSES:
+            continue
+        priority_raw = t.get("PriorityName", "") or ""
         active.append({
-            "id":           str(t.get("Id") or t.get("id", "")),
-            "ticket_number": f"TKT-{t.get('Id') or t.get('id', '')}",
-            "title":        t.get("Title") or t.get("title") or "(no title)",
-            "priority":     priority,
-            "status":       status_raw or "open",
-            "assignee":     t.get("AssigneeName") or t.get("Assignee") or "",
+            "id":           str(t.get("Id", "")),
+            "ticket_number": str(t.get("DisplayId") or t.get("Id", "")),
+            "title":        t.get("Title", ""),
+            "status":       t.get("StatusName", "open"),
+            "priority":     _normalize_priority(priority_raw),
+            "priority_raw": priority_raw,
+            "assignee":     t.get("TakenByName") or t.get("OwnerName") or "",
             "category":     t.get("CategoryLineage", ""),
             "type":         t.get("RecordTypeNameSingular", "Ticket"),
             "opened":       t.get("OpenDate", ""),
@@ -1270,22 +1309,6 @@ async def _vivantio_fetch_tickets(url: str, username: str, password: str) -> lis
         -(int(x["id"] or 0))
     ))
     return active
-
-
-async def _vivantio_all_tickets(url: str, username: str, password: str, ids: list) -> list:
-    if not ids:
-        return []
-    auth = base64.b64encode(f"{username}:{password}".encode()).decode()
-    hdrs = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
-    base = url.rstrip("/")
-    results = []
-    async with httpx.AsyncClient(timeout=20, verify=False) as c:
-        for i in range(0, len(ids), 200):
-            batch = ids[i:i+200]
-            r = await c.post(f"{base}/api/Ticket/SelectList", headers=hdrs, json=batch)
-            if r.status_code == 200:
-                results.extend(r.json())
-    return results
 
 
 async def background_vivantio_warmer():
