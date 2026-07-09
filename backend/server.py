@@ -432,9 +432,9 @@ async def root():
 
 @api_router.get("/dashboard/summary")
 async def dashboard_summary():
-    alerts = await db.alerts.find({}, {"_id": 0}).to_list(1000)
-    circuits = await db.circuits.find({}, {"_id": 0}).to_list(1000)
-    tickets = await db.tickets.find({}, {"_id": 0}).to_list(1000)
+    alerts   = await db.alerts.find({}, {"_id": 0}).to_list(1000)
+    circuits = (await get_aruba_circuits_live()) or (await db.circuits.find({}, {"_id": 0}).to_list(1000))
+    tickets  = await db.tickets.find({}, {"_id": 0}).to_list(1000)
     return {
         "alerts": {
             "total": len(alerts),
@@ -503,8 +503,116 @@ async def delete_alert(alert_id: str):
         raise HTTPException(status_code=404, detail="Alert not found")
     return {"success": True}
 
+# ─── Aruba SD-WAN Helpers ─────────────────────────────────────────────────────
+
+ARUBA_STATE_MAP = {1: "up", 2: "degraded", 3: "down", 4: "unknown", 0: "unknown"}
+
+# Normalize Orchestrator site names → dashboard site names
+SITE_NAME_MAP = {
+    "cantonment":          "Canton",
+    "cantonwhs-edge-01":   "Canton Warehouse",
+    "mt pleasant":         "Mt. Pleasant",
+    "mt. pleasant":        "Mt. Pleasant",
+}
+
+def normalize_site(name: str) -> str:
+    return SITE_NAME_MAP.get(name.lower(), name)
+
+async def aruba_request(method: str, endpoint: str, body=None):
+    cfg = await db.settings.find_one({"_id": "app_settings"})
+    base = (cfg.get("aruba_api_url") or "").rstrip("/")
+    key  = cfg.get("aruba_api_key") or ""
+    if not base or not key:
+        return None
+    url  = f"{base}/gms/rest{endpoint}"
+    hdrs = {"X-Auth-Token": key, "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=20) as client:
+            if method == "GET":
+                r = await client.get(url, headers=hdrs)
+            else:
+                r = await client.post(url, json=body or {}, headers=hdrs)
+        return r.json() if r.status_code == 200 else None
+    except Exception as e:
+        logger.warning(f"Aruba request {endpoint} failed: {e}")
+        return None
+
+async def get_aruba_circuits_live():
+    apps = await aruba_request("GET", "/appliance")
+    if not apps:
+        return None
+    circuits = []
+    for a in apps:
+        if a.get("site", "").lower() == "azure":
+            continue
+        state  = a.get("state", 0)
+        status = ARUBA_STATE_MAP.get(state, "unknown")
+        circuits.append({
+            "id":            a["id"],
+            "site":          normalize_site(a.get("site", "")),
+            "provider":      "Aruba SD-WAN",
+            "circuit_id":    a.get("serial", a["id"]),
+            "bandwidth_mbps": int(a.get("systemBandwidth", 0) / 1_000_000) or 1000,
+            "status":        status,
+            "model":         a.get("model", ""),
+            "hostname":      a.get("hostName", ""),
+            "last_checked":  datetime.now(timezone.utc).isoformat(),
+        })
+    return circuits
+
+# ─── Aruba API Endpoints ───────────────────────────────────────────────────────
+
+@api_router.get("/aruba/status")
+async def aruba_status():
+    result = await aruba_request("GET", "/alarm/summary")
+    if result is None:
+        return {"connected": False, "reason": "Cannot reach Aruba Orchestrator — check URL and API key in Settings"}
+    return {
+        "connected": True,
+        "alarms":    result,
+    }
+
+@api_router.get("/aruba/mesh")
+async def aruba_mesh():
+    apps = await aruba_request("GET", "/appliance")
+    if not apps:
+        return []
+    ne_to_site   = {a["id"]: normalize_site(a["site"]) for a in apps}
+    id_to_ne     = {a["applianceId"]: a["id"] for a in apps}
+    nePks        = [a["id"] for a in apps]
+
+    tunnels = await aruba_request("POST", "/tunnels/physical/state", {"nePks": nePks})
+    if not tunnels:
+        return []
+
+    links = {}
+    for ne, data in tunnels.items():
+        src = ne_to_site.get(ne)
+        if not src:
+            continue
+        for t in data.get("allTunnelState", {}).values():
+            remote_ne  = id_to_ne.get(t.get("remote_id"))
+            if not remote_ne:
+                continue
+            dst = ne_to_site.get(remote_ne)
+            if not dst or src == dst:
+                continue
+            pair   = tuple(sorted([src, dst]))
+            oper   = t.get("oper", "")
+            status = "up" if "Up" in oper else ("down" if "Down" in oper else "degraded")
+            cur    = links.get(pair, {}).get("status", "up")
+            if status == "down" or (status == "degraded" and cur == "up"):
+                links[pair] = {"src": pair[0], "dst": pair[1], "status": status}
+            elif pair not in links:
+                links[pair] = {"src": pair[0], "dst": pair[1], "status": status}
+
+    return list(links.values())
+
 @api_router.get("/circuits")
 async def get_circuits():
+    live = await get_aruba_circuits_live()
+    if live is not None:
+        return live
     return await db.circuits.find({}, {"_id": 0}).sort("site", 1).to_list(100)
 
 @api_router.post("/circuits")
@@ -571,24 +679,25 @@ async def get_vendor_status():
     return list(results)
 
 SITES_DATA = [
-    {"id": "remus", "name": "Remus", "state": "MI", "coordinates": [-85.147, 43.598], "type": "office"},
-    {"id": "ovid", "name": "Ovid", "state": "MI", "coordinates": [-84.371, 43.001], "type": "office"},
-    {"id": "mt-pleasant", "name": "Mt. Pleasant", "state": "MI", "coordinates": [-84.774, 43.598], "type": "office"},
-    {"id": "constantine", "name": "Constantine", "state": "MI", "coordinates": [-85.667, 41.841], "type": "office"},
-    {"id": "novi", "name": "Novi", "state": "MI", "coordinates": [-83.476, 42.481], "type": "hq"},
-    {"id": "canton-plant", "name": "Canton Plant", "state": "OH", "coordinates": [-81.378, 40.799], "type": "plant"},
-    {"id": "canton-warehouse", "name": "Canton Warehouse", "state": "OH", "coordinates": [-81.390, 40.870], "type": "warehouse"},
-    {"id": "middlebury", "name": "Middlebury", "state": "IN", "coordinates": [-85.707, 41.676], "type": "office"},
+    {"id": "remus",           "name": "Remus",            "state": "MI", "coordinates": [-85.147, 43.598], "type": "office"},
+    {"id": "ovid",            "name": "Ovid",             "state": "MI", "coordinates": [-84.371, 43.001], "type": "office"},
+    {"id": "mt-pleasant",    "name": "Mt. Pleasant",     "state": "MI", "coordinates": [-84.774, 43.598], "type": "office"},
+    {"id": "constantine",    "name": "Constantine",      "state": "MI", "coordinates": [-85.667, 41.841], "type": "office"},
+    {"id": "novi",            "name": "Novi",             "state": "MI", "coordinates": [-83.476, 42.481], "type": "hq"},
+    {"id": "canton",          "name": "Canton",           "state": "OH", "coordinates": [-81.378, 40.799], "type": "plant"},
+    {"id": "canton-warehouse","name": "Canton Warehouse", "state": "OH", "coordinates": [-81.390, 40.870], "type": "warehouse"},
+    {"id": "middlebury",      "name": "Middlebury",       "state": "IN", "coordinates": [-85.707, 41.676], "type": "office"},
 ]
 
 @api_router.get("/sites")
 async def get_sites():
-    circuits = await db.circuits.find({}, {"_id": 0}).to_list(100)
-    alerts = await db.alerts.find({"acknowledged": False}, {"_id": 0}).to_list(100)
+    live_circuits = await get_aruba_circuits_live()
+    circuits      = live_circuits if live_circuits is not None else await db.circuits.find({}, {"_id": 0}).to_list(100)
+    alerts        = await db.alerts.find({"acknowledged": False}, {"_id": 0}).to_list(100)
     sites = []
     for sd in SITES_DATA:
         site_circuits = [c for c in circuits if c["site"].lower() == sd["name"].lower()]
-        site_alerts = [a for a in alerts if (a.get("site") or "").lower() == sd["name"].lower()]
+        site_alerts   = [a for a in alerts if (a.get("site") or "").lower() == sd["name"].lower()]
         if any(c["status"] == "down" for c in site_circuits):
             status = "offline"
         elif any(c["status"] == "degraded" for c in site_circuits) or any(a["severity"] == "critical" for a in site_alerts):
