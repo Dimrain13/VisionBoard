@@ -47,14 +47,14 @@ fi
 
 # ─── 3. Python dependencies ───────────────────────────────────────
 step "Python dependencies"
+# Use Pi-specific requirements — excludes Emergent-internal packages not available on PyPI
 # --trusted-host flags handle corporate SSL inspection proxies
-# --break-system-packages required on Debian Trixie / Pi OS (Bookworm+)
 python3 -m pip install --quiet \
   --trusted-host pypi.org \
   --trusted-host files.pythonhosted.org \
   --trusted-host pypi.python.org \
   --break-system-packages \
-  -r "$REPO_DIR/backend/requirements.txt"
+  -r "$REPO_DIR/backend/requirements-pi.txt"
 info "Python packages installed"
 
 # ─── 4. Environment files ─────────────────────────────────────────
