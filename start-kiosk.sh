@@ -31,16 +31,11 @@ export DISPLAY=:0
 
 exec chromium \
   --no-sandbox \
-  --disable-gpu \
   --disable-dev-shm-usage \
-  --renderer-process-limit=1 \
   --password-store=basic \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
-  --disable-session-crashed-bubble \
   --no-first-run \
   --disable-restore-session-state \
-  --disable-component-update \
-  --check-for-update-interval=31536000 \
-  --app="$URL"
+  http://localhost:8001
