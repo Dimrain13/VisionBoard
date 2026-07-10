@@ -150,34 +150,17 @@ else
   fi
 fi
 
-# ─── 8. Kiosk autostart ───────────────────────────────────────────
+# ─── 8. Make scripts executable ──────────────────────────────────
+step "Script permissions"
+chmod +x "$REPO_DIR/kiosk.sh" "$REPO_DIR/setup_autostart.sh" 2>/dev/null || true
+[ -f "$REPO_DIR/start.sh" ] && chmod +x "$REPO_DIR/start.sh"
+info "kiosk.sh, setup_autostart.sh marked executable"
+
+# ─── 9. Kiosk autostart ───────────────────────────────────────────
 step "Kiosk autostart (LXDE)"
-AUTOSTART_DIR="$HOME/.config/lxsession/LXDE-pi"
-AUTOSTART_FILE="$AUTOSTART_DIR/autostart"
-
-mkdir -p "$AUTOSTART_DIR"
-
-# Preserve any existing entries that aren't ours
-TEMP=$(mktemp)
-if [ -f "$AUTOSTART_FILE" ]; then
-  grep -v "it-dashboard\|chromium.*8001\|xset s\|xset -dpms\|unclutter" "$AUTOSTART_FILE" > "$TEMP" || true
-else
-  touch "$TEMP"
-fi
-
-cat >> "$TEMP" <<EOF
-
-# IT Command Center kiosk — added by install.sh
-@xset s off
-@xset -dpms
-@xset s noblank
-@unclutter -idle 1 -root
-@bash ${REPO_DIR}/kiosk.sh
-EOF
-
-cp "$TEMP" "$AUTOSTART_FILE"
-rm "$TEMP"
-info "Kiosk autostart configured in $AUTOSTART_FILE"
+# Delegate to setup_autostart.sh — uses Python to write the file, avoiding
+# heredoc quoting issues and SSH session problems that plagued the old cat approach.
+bash "$REPO_DIR/setup_autostart.sh"
 
 # ─── Done ─────────────────────────────────────────────────────────
 echo ""
@@ -200,5 +183,6 @@ echo ""
 echo -e "  ${BOLD}Useful commands:${RESET}"
 echo "    sudo systemctl restart it-dashboard   # restart backend"
 echo "    sudo journalctl -u it-dashboard -f    # tail live logs"
-echo "    ./kiosk.sh                            # launch kiosk manually"
+echo "    ./kiosk.sh                            # launch kiosk manually (foreground)"
+echo "    ./setup_autostart.sh                  # re-run autostart setup if needed"
 echo ""
