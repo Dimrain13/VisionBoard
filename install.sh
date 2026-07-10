@@ -54,12 +54,6 @@ python3 -m pip install --quiet \
   --trusted-host files.pythonhosted.org \
   --trusted-host pypi.python.org \
   --break-system-packages \
-  --upgrade pip
-python3 -m pip install --quiet \
-  --trusted-host pypi.org \
-  --trusted-host files.pythonhosted.org \
-  --trusted-host pypi.python.org \
-  --break-system-packages \
   -r "$REPO_DIR/backend/requirements.txt"
 info "Python packages installed"
 
