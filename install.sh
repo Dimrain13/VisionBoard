@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # IT Command Center — Raspberry Pi Install Script
 # Tested on: Raspberry Pi OS 64-bit (Bookworm / Bullseye), Pi 4 / Pi 5
-# Run once after cloning the repo:  chmod +x install.sh && ./install.sh
+# Run once after cloning the repo:  chmod +x install.sh && sudo ./install.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -13,6 +13,17 @@ info()  { echo -e "${GREEN}[INFO]${RESET}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error() { echo -e "${RED}[ERROR]${RESET} $*"; exit 1; }
 step()  { echo -e "\n${BOLD}── $* ──────────────────────────────────────────${RESET}"; }
+
+# ─── Determine the REAL kiosk user ────────────────────────────────
+# If run as root via sudo, use the invoking user. Otherwise use whoami.
+# This ensures autostart, autologin, and service all target the desktop user.
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  CURRENT_USER="$SUDO_USER"
+else
+  CURRENT_USER="$(whoami)"
+fi
+USER_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
+info "Target kiosk user: $CURRENT_USER  (home: $USER_HOME)"
 
 echo -e "${BOLD}"
 echo "  ╔══════════════════════════════════════╗"
@@ -101,7 +112,6 @@ cd "$REPO_DIR"
 # ─── 6. Systemd service ───────────────────────────────────────────
 step "Systemd service (it-dashboard)"
 SERVICE_FILE="/etc/systemd/system/it-dashboard.service"
-CURRENT_USER=$(whoami)
 
 sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
@@ -134,16 +144,25 @@ step "Desktop auto-login (required for kiosk)"
 # Ensures the Pi boots straight to the desktop as the current user —
 # without this the kiosk never launches because LXDE autostart never runs.
 if command -v raspi-config &>/dev/null; then
-  # B4 = Desktop Autologin
+  # Set autologin for the ACTUAL kiosk user (not root)
   sudo raspi-config nonint do_boot_behaviour B4
-  info "Auto-login to desktop enabled via raspi-config"
+  # raspi-config B4 targets the default user — override lightdm explicitly
+  LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
+  if [ -f "$LIGHTDM_CONF" ]; then
+    sudo sed -i "s/^autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
+    sudo sed -i "s/^#autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
+    sudo sed -i "s/^autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
+    sudo sed -i "s/^#autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
+    info "Auto-login set to user: $CURRENT_USER in $LIGHTDM_CONF"
+  fi
+  info "Desktop autologin enabled"
 else
   # Fallback: write lightdm config directly
   LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
   if [ -f "$LIGHTDM_CONF" ]; then
     sudo sed -i "s/#autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
     sudo sed -i "s/#autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
-    info "Auto-login configured in $LIGHTDM_CONF"
+    info "Auto-login configured in $LIGHTDM_CONF for user: $CURRENT_USER"
   else
     warn "Could not configure auto-login automatically."
     warn "Open: sudo raspi-config → System Options → Boot / Auto Login → Desktop Autologin"

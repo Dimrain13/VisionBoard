@@ -3,19 +3,31 @@
 # IT Command Center — LXDE Kiosk Autostart Setup
 #
 # Run this ONCE from SSH to configure LXDE so Chromium launches on every boot.
-# Uses Python to write the file — no heredoc / session issues.
+# Safe to run as root (sudo) or as the kiosk user directly.
 #
-#   chmod +x setup_autostart.sh && ./setup_autostart.sh
+#   chmod +x setup_autostart.sh && sudo ./setup_autostart.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AUTOSTART_DIR="$HOME/.config/lxsession/LXDE-pi"
+
+# ── Determine the real target user ───────────────────────────────────────────
+# If run as root via sudo, write to the INVOKING user's home (not /root).
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  TARGET_USER="$SUDO_USER"
+  TARGET_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+else
+  TARGET_USER="$(whoami)"
+  TARGET_HOME="$HOME"
+fi
+
+AUTOSTART_DIR="$TARGET_HOME/.config/lxsession/LXDE-pi"
 AUTOSTART_FILE="$AUTOSTART_DIR/autostart"
 
 echo ""
 echo "  IT Command Center — Autostart Setup"
-echo "  Repo:      $REPO_DIR"
-echo "  Autostart: $AUTOSTART_FILE"
+echo "  Target user: $TARGET_USER"
+echo "  Home:        $TARGET_HOME"
+echo "  Autostart:   $AUTOSTART_FILE"
 echo ""
 
 # ── Create directory if missing ───────────────────────────────────────────────
@@ -65,6 +77,12 @@ PYEOF
 if [ $? -ne 0 ]; then
   echo "ERROR: Python write failed. Check Python 3 is installed."
   exit 1
+fi
+
+# ── Fix ownership — file must be owned by the kiosk user, not root ───────────
+if [ "$(id -u)" -eq 0 ]; then
+  chown -R "$TARGET_USER":"$TARGET_USER" "$AUTOSTART_DIR"
+  echo "Ownership set to $TARGET_USER"
 fi
 
 # ── Show the result ───────────────────────────────────────────────────────────
