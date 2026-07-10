@@ -141,32 +141,25 @@ info "Service enabled and started (sudo systemctl status it-dashboard)"
 
 # ─── 7. Desktop auto-login ────────────────────────────────────────
 step "Desktop auto-login (required for kiosk)"
-# Ensures the Pi boots straight to the desktop as the current user —
-# without this the kiosk never launches because LXDE autostart never runs.
-if command -v raspi-config &>/dev/null; then
-  # Set autologin for the ACTUAL kiosk user (not root)
-  sudo raspi-config nonint do_boot_behaviour B4
-  # raspi-config B4 targets the default user — override lightdm explicitly
-  LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
-  if [ -f "$LIGHTDM_CONF" ]; then
-    sudo sed -i "s/^autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
-    sudo sed -i "s/^#autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
-    sudo sed -i "s/^autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
-    sudo sed -i "s/^#autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
-    info "Auto-login set to user: $CURRENT_USER in $LIGHTDM_CONF"
-  fi
-  info "Desktop autologin enabled"
+# Ensures the Pi boots to the DESKTOP (graphical.target), not the console.
+# Then configures lightdm to auto-login the kiosk user without a password prompt.
+
+# 1. Force graphical (desktop) boot target — prevents console autologin
+sudo systemctl set-default graphical.target
+info "Boot target set to graphical.target (desktop)"
+
+# 2. Configure lightdm for desktop autologin
+LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
+if [ -f "$LIGHTDM_CONF" ]; then
+  # Un-comment and set autologin-user
+  sudo sed -i "s/^#\?autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
+  # Un-comment and set autologin-user-timeout
+  sudo sed -i "s/^#\?autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
+  info "lightdm autologin configured for user: $CURRENT_USER"
+  grep -E "^autologin" "$LIGHTDM_CONF" || true
 else
-  # Fallback: write lightdm config directly
-  LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
-  if [ -f "$LIGHTDM_CONF" ]; then
-    sudo sed -i "s/#autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
-    sudo sed -i "s/#autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
-    info "Auto-login configured in $LIGHTDM_CONF for user: $CURRENT_USER"
-  else
-    warn "Could not configure auto-login automatically."
-    warn "Open: sudo raspi-config → System Options → Boot / Auto Login → Desktop Autologin"
-  fi
+  warn "lightdm.conf not found — skipping autologin config."
+  warn "Manually run: sudo raspi-config → System → Boot / Auto Login → Desktop Autologin"
 fi
 
 # ─── 8. Make scripts executable ──────────────────────────────────
