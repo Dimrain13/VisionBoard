@@ -12,7 +12,7 @@ exec >> "$LOG" 2>&1
 echo "=== kiosk started at $(date) ==="
 
 # Give labwc compositor time to fully settle
-sleep 8
+sleep 12
 
 # Wait for backend to be ready (up to 90s)
 for i in $(seq 1 90); do
@@ -25,11 +25,14 @@ echo "Backend ready, launching Chromium..."
 rm -f "$HOME/.config/chromium/SingletonLock" \
        "$HOME/.config/chromium/SingletonCookie" 2>/dev/null
 
+# Use DISPLAY=:0 (XWayland) — same as the manual command that works reliably.
+# --ozone-platform=wayland omitted: WAYLAND_DISPLAY not reliably set this early in boot.
+export DISPLAY=:0
+
 exec chromium \
-  --ozone-platform=wayland \
   --no-sandbox \
-  --disable-dev-shm-usage \
   --disable-gpu \
+  --disable-dev-shm-usage \
   --renderer-process-limit=1 \
   --password-store=basic \
   --kiosk \
