@@ -43,7 +43,10 @@ export default function MapEmbed() {
     >
       <defs>
         <style>{`
-          @keyframes traffic-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -24; } }
+          @keyframes traffic-pulse {
+            0%, 100% { opacity: 0.08; }
+            50%       { opacity: 0.75; }
+          }
         `}</style>
       </defs>
 
@@ -78,11 +81,13 @@ export default function MapEmbed() {
         return (
           <g key={`m-${src}-${dst}`}>
             <Line from={srcC} to={dstC}
-              stroke="#00FF66" strokeWidth={baseW} opacity={0.07} />
+              stroke="#00FF66" strokeWidth={baseW} opacity={0.06} />
             <Line from={srcC} to={dstC}
               stroke="#00FF66" strokeWidth={flowW}
-              strokeDasharray="4 20"
-              style={{ animation: `traffic-flow ${dur}s linear ${delay} infinite`, opacity: opFlow }}
+              style={{
+                animation: `traffic-pulse ${dur}s ease-in-out ${delay} infinite`,
+                willChange: "opacity",
+              }}
             />
           </g>
         );

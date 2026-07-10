@@ -171,8 +171,8 @@ export default function NetworkMap() {
             {/* ── Keyframe: flowing traffic dashoffset march ── */}
             <defs>
               <style>{`
-                @keyframes traffic-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -24; } }
-                @keyframes wan-down     { 0%,100%{opacity:.3} 50%{opacity:.85} }
+                @keyframes traffic-pulse { 0%,100%{opacity:0.08} 50%{opacity:0.75} }
+                @keyframes wan-down      { 0%,100%{opacity:.3}  50%{opacity:.85}  }
               `}</style>
             </defs>
 
@@ -197,11 +197,11 @@ export default function NetworkMap() {
                   <Line from={src} to={dst} stroke={color}
                     strokeWidth={isDown ? baseW * 2.5 : baseW}
                     strokeOpacity={isDown ? 0.18 : opBase} strokeLinecap="round" />
-                  {/* Flowing packets */}
+                  {/* Flowing packets — opacity only (GPU composited, no CPU repaint) */}
                   {!isDown && (
                     <Line from={src} to={dst} stroke={color}
-                      strokeWidth={flowW} strokeDasharray="4 20" strokeLinecap="round"
-                      style={{ animation:`traffic-flow ${dur}s linear ${delay} infinite`, opacity:opFlow }} />
+                      strokeWidth={flowW} strokeLinecap="round"
+                      style={{ animation:`traffic-pulse ${dur}s ease-in-out ${delay} infinite`, willChange:"opacity" }} />
                   )}
                   {/* Down — pulsing red */}
                   {isDown && (
