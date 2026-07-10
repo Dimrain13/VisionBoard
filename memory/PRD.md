@@ -67,6 +67,13 @@ Create a dashboard in Python/React to display important IT information at a glan
 - DD token retries 3× (10s apart) before logging error; no Statuspage.io fallback
 - `source` field in API response: `"downdetector"` | `"http_check"` | `"none"`
 
+### Pi Deployment (2026-07-10)
+- `install.sh` — full Raspberry Pi install: Node 18, Python deps, React build, systemd service, kiosk LXDE autostart
+- `start.sh` / `kiosk.sh` — foreground launcher + Chromium kiosk with readiness check
+- `backend/.env.example` — Pi .env template; `README-PI.md` — full deployment + troubleshooting guide
+- `server.py` — added `StaticFiles` + SPA catch-all: FastAPI serves built React at port 8001 (no Node dev server on Pi)
+- `requirements.txt` — `aiofiles>=23.2.1` added; deployment check: PASS (0 blockers)
+
 ### WUG Network Topology (NEW — 2026-07-09)
 - New tab: **WUG** — circuit-board style hierarchical topology per location
 - 5 locations: Novi HQ, Remus, Mt. Pleasant, Constantine, Canton
