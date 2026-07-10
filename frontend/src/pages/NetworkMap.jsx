@@ -10,8 +10,8 @@ import {
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-// US States TopoJSON — filtered to MI/OH/IN + surrounding context
-const GEO_URL = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json";
+// US States TopoJSON — served locally (no CDN dependency on Pi)
+const GEO_URL = "/us-states-10m.json";
 
 // FIPS codes:  MI=26  OH=39  IN=18  IL=17  (context: WI=55, KY=21, PA=42, WV=54)
 const PRIMARY_STATES  = new Set(["26", "39", "18", "17"]);

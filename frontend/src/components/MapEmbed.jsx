@@ -1,24 +1,18 @@
 /**
- * MapEmbed — geographic NOC topology map for the Dashboard.
- * Full mesh: every site connected to every other site with flowing traffic animation.
- *   Green flowing packets = WAN up
- *   Red pulse            = either endpoint WAN is DOWN
- *
- * Performance note: --disable-gpu in kiosk.sh eliminates the Pi 4 GPU crash.
- * Skia software rasterizer handles these thin dashed paths cleanly.
+ * MapEmbed — static geographic NOC topology map for the Dashboard.
+ * No API calls, no intervals. Renders once from local bundled geo JSON.
+ * All mesh lines are permanently green (traffic-flow animation).
+ * Circuit status is shown separately in the DIA Circuit Status Engine.
  */
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
-import axios from "axios";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const GEO_URL = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json";
+const GEO_URL = "/us-states-10m.json";
 const PROJECTION_CONFIG = { scale: 4500, center: [-84.8, 42.4] };
 
 const PRIMARY_STATES = new Set(["26", "39", "18", "17"]);  // MI OH IN IL
 const CONTEXT_STATES = new Set(["55", "21", "42", "54"]);  // WI KY PA WV
 
-// Site lon/lat
 const SITES = {
   "Novi":             { coords: [-83.476, 42.481], hub: true  },
   "Remus":            { coords: [-85.147, 43.742]             },
@@ -36,42 +30,9 @@ const SITE_KEYS = Object.keys(SITES);
 const MESH_PAIRS = [];
 for (let i = 0; i < SITE_KEYS.length; i++)
   for (let j = i + 1; j < SITE_KEYS.length; j++)
-    MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j] });
+    MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j], idx: i * SITE_KEYS.length + j });
 
-function normalize(name) {
-  return (name || "").replace(/\s+plant$/i, "").trim();
-}
-
-export default function MapEmbed({ sites = [] }) {
-  const [circuits, setCircuits] = useState([]);
-
-  const fetchData = () =>
-    axios.get(`${API}/circuits`)
-      .then(r => setCircuits(Array.isArray(r.data) ? r.data : []))
-      .catch(() => {});
-
-  useEffect(() => {
-    fetchData();
-    const iv = setInterval(fetchData, 60_000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // site name → worst circuit status
-  const circuitStatus = {};
-  circuits.forEach(c => {
-    const key = normalize(c.site);
-    const ord = { down: 0, degraded: 1, unknown: 2, up: 3 };
-    if (circuitStatus[key] === undefined || ord[c.status] < ord[circuitStatus[key]])
-      circuitStatus[key] = c.status || "unknown";
-  });
-
-  // fallback from /api/sites prop
-  const siteStatus = {};
-  sites.forEach(s => { siteStatus[normalize(s.name)] = s.status || "unknown"; });
-
-  const isWanDown = name =>
-    circuitStatus[name] === "down" || siteStatus[name] === "offline";
-
+export default function MapEmbed() {
   return (
     <ComposableMap
       projection="geoMercator"
@@ -83,7 +44,6 @@ export default function MapEmbed({ sites = [] }) {
       <defs>
         <style>{`
           @keyframes traffic-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -24; } }
-          @keyframes wan-down     { 0%,100%{opacity:.3} 50%{opacity:.85} }
         `}</style>
       </defs>
 
@@ -102,52 +62,28 @@ export default function MapEmbed({ sites = [] }) {
         }
       </Geographies>
 
-      {/* Full mesh: every site ↔ every other site with flowing traffic */}
-      {MESH_PAIRS.map(({ src, dst }, i) => {
+      {/* Full mesh with flowing traffic animation — static green */}
+      {MESH_PAIRS.map(({ src, dst, idx }) => {
         const srcC = SITES[src]?.coords;
         const dstC = SITES[dst]?.coords;
         if (!srcC || !dstC) return null;
 
-        const down  = isWanDown(normalize(src)) || isWanDown(normalize(dst));
-        const color = down ? "#FF2A2A" : "#00FF66";
-
-        // Backbone lines (Novi or Azure endpoints) are slightly more prominent
         const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
         const baseW    = backbone ? 0.65 : 0.30;
         const flowW    = backbone ? 1.0  : 0.55;
-        const opBase   = backbone ? 0.08 : 0.05;
         const opFlow   = backbone ? 0.65 : 0.35;
         const dur      = backbone ? 2.2  : 3.0;
-        // Stagger start position so all lines don't pulse in sync
-        const delay    = `-${((i * 0.18) % dur).toFixed(2)}s`;
+        const delay    = `-${((idx * 0.18) % dur).toFixed(2)}s`;
 
         return (
           <g key={`m-${src}-${dst}`}>
-            {/* Ghost base trace — static, no animation */}
             <Line from={srcC} to={dstC}
-              stroke={color} strokeWidth={down ? baseW * 2.5 : baseW}
-              opacity={down ? 0.18 : opBase} />
-            {/* Flowing traffic packets — dashoffset march along the line */}
-            {!down && (
-              <Line from={srcC} to={dstC}
-                stroke={color} strokeWidth={flowW}
-                strokeDasharray="4 20"
-                style={{
-                  animation: `traffic-flow ${dur}s linear ${delay} infinite`,
-                  opacity: opFlow,
-                }}
-              />
-            )}
-            {/* Pulsing red when WAN is down */}
-            {down && (
-              <Line from={srcC} to={dstC}
-                stroke={color} strokeWidth={baseW * 3}
-                style={{
-                  animation: `wan-down 1.8s ease-in-out ${delay} infinite`,
-                  opacity: 0.6,
-                }}
-              />
-            )}
+              stroke="#00FF66" strokeWidth={baseW} opacity={0.07} />
+            <Line from={srcC} to={dstC}
+              stroke="#00FF66" strokeWidth={flowW}
+              strokeDasharray="4 20"
+              style={{ animation: `traffic-flow ${dur}s linear ${delay} infinite`, opacity: opFlow }}
+            />
           </g>
         );
       })}
@@ -170,18 +106,13 @@ export default function MapEmbed({ sites = [] }) {
             </Marker>
           );
         }
-
-        const key   = normalize(name);
-        const down  = isWanDown(key);
-        const color = down ? "#FF2A2A" : "#00FF66";
-        const nr    = hub ? 7 : 5;
-        const rr    = hub ? 11 : 8;
-
+        const nr = hub ? 7 : 5;
+        const rr = hub ? 11 : 8;
         return (
           <Marker key={name} coordinates={coords}>
             <g>
-              <circle r={nr} fill={color} opacity={hub ? 1 : 0.88} />
-              <circle r={rr} fill="none" stroke={color} strokeWidth={hub ? 0.8 : 0.5} opacity={0.22} />
+              <circle r={nr} fill="#00FF66" opacity={hub ? 1 : 0.88} />
+              <circle r={rr} fill="none" stroke="#00FF66" strokeWidth={hub ? 0.8 : 0.5} opacity={0.22} />
               <text y={-(nr + 5)} textAnchor="middle" style={{
                 fontFamily:"'JetBrains Mono',monospace",
                 fontSize: hub ? 7.5 : 6.5,

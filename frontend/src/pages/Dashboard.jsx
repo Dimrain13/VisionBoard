@@ -191,7 +191,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div style={{ flex: 1, background: "#030305" }}>
-              <MapEmbed sites={sites} />
+              <MapEmbed />
             </div>
           </div>
 
