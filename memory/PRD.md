@@ -14,11 +14,15 @@ Create a dashboard in Python/React to display important IT information at a glan
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/          # Dashboard, NetworkMap, Alerts, ServiceStatus, UniFiDevices, Tickets, WUGDevices, Wazuh, Settings
-│   │   ├── components/     # MapEmbed.jsx, TopNav.jsx
+│   │   ├── components/     # MapEmbed.jsx, TopNav.jsx, Layout.jsx
 │   │   └── index.css       # JetBrains Mono global font
 │   └── tailwind.config.js
+├── install.sh              # Full Pi setup — run once after clone
+├── kiosk.sh                # PRIMARY kiosk launcher (Wayland-aware, used by autostart)
+├── start-kiosk.sh          # Legacy launcher (kept for compatibility, fixed flags)
+├── setup_autostart.sh      # Writes labwc autostart — run after changes
 ├── memory/
-│   ├── PRD.md              # This file
+│   ├── PRD.md
 │   ├── test_credentials.md
 │   └── CHANGELOG.md
 ```
@@ -26,7 +30,7 @@ Create a dashboard in Python/React to display important IT information at a glan
 ## Storage (MongoDB-free)
 - **settings.yml** — all credentials, API keys, feature flags. Edit directly or via Settings page.
 - **circuits.yml** — DIA circuit inventory. Edit directly. Persists across restarts.
-- **In-memory** — alerts (from WUG email), Vivantio cache, UniFi events ring buffer. Resets on restart (intentional — real data re-fetches from live sources).
+- **In-memory** — alerts (from WUG email), Vivantio cache, UniFi events ring buffer. Resets on restart.
 
 ## What's Been Implemented
 
@@ -38,105 +42,62 @@ Create a dashboard in Python/React to display important IT information at a glan
 
 ### Dashboard (Main NOC View)
 - 4 KPI cards: System Alerts, Network Availability, External Services, Response Queue
-- **Global Topology Mesh Map** (react-simple-maps):
-  - Hub-and-spoke DIA circuit lines: Novi (HQ) → each site
-  - Green flowing animated lines = circuit UP
-  - Red pulsing line = circuit DOWN
-  - Amber dashed animated line = circuit DEGRADED
-  - Aruba SD-WAN mesh overlay when available
-  - MI/OH/IN/IL primary states + WI/KY/PA/WV context borders
-- **Critical Event Stream** — real alerts from WUG email/Wazuh only; "All Systems Nominal" when empty
+- **Global Topology Mesh Map** (react-simple-maps, offline bundled us-states-10m.json)
+- **Critical Event Stream** — real alerts from WUG email/Wazuh only
 - **Vendor Health Matrix** — 4-column grid with live status dots
-- **Incident Queue** — live from Vivantio (65+ tickets loaded)
-- **DIA Circuit Status Engine** — per-site colored badges at bottom
+- **Incident Queue** — live from Vivantio
+- **DIA Circuit Status Engine** — per-site colored badges
 
 ### Integrations
 | Integration | Status | Notes |
 |---|---|---|
 | Vivantio ITSM | ✅ LIVE | 65 active tickets; auto-refreshes every 60s |
-| Downdetector API | ⚠️ NEEDS CREDENTIALS | Enter client_id/secret in Settings → DOWNDETECTOR API. Token auto-rotates every 45min once configured. |
-| UniFi Network | ✅ CONFIGURED (LAN only) | noc-readonly@unifi.mimilk.com:8443; works when Pi is on local network |
-| Aruba EdgeConnect | ⚠️ NOT CONFIGURED | Needs aruba_api_url + aruba_api_key in Settings |
-| Wazuh SIEM | ⚠️ NOT CONFIGURED | LAN IP 10.202.10.70; works when Pi is on local network |
-| WUG Email Alerts | ⚠️ NOT CONFIGURED | Needs IMAP credentials in Settings |
+| Downdetector API | ⚠️ NEEDS CREDENTIALS | Enter client_id/secret in Settings |
+| UniFi Network | ✅ CONFIGURED (LAN only) | noc-readonly@unifi.mimilk.com:8443 |
+| Aruba EdgeConnect | ⚠️ NOT CONFIGURED | Needs aruba_api_url + aruba_api_key |
+| Wazuh SIEM | ⚠️ NOT CONFIGURED | LAN IP 10.202.10.70 |
+| WUG Email Alerts | ⚠️ NOT CONFIGURED | Needs IMAP credentials |
 
-### Vendor Status (ServiceStatus page)
-- 21 vendors across Security, Microsoft, AI, Cloud, Telecom, Other
-- **Source priority**: 1) Downdetector Enterprise API (if credentials set), 2) HTTP HEAD ping to vendor's own public endpoint
-- All 21 vendors show live status via HTTP ping even without DD credentials
-- DD token retries 3× (10s apart) before logging error; no Statuspage.io fallback
-- `source` field in API response: `"downdetector"` | `"http_check"` | `"none"`
+### Pi Kiosk — Raspberry Pi Deployment (FIXED 2026-07-10)
+- **Session**: `rpd-labwc` (Wayland, Pi OS Bookworm/Trixie)
+- **Autostart**: `~/.config/labwc/autostart` → `bash /path/to/kiosk.sh &`
+- **Boot target**: `graphical.target` (desktop, not console)
+- **Auto-login**: lightdm configured via `sed` directly (not raspi-config which sets wrong mode)
+- **Kiosk script**: `kiosk.sh` — auto-detects Wayland/X11, minimal safe flags
+- **White screen root cause**: `--disable-software-rasterizer` combined with `--disable-gpu` removes ALL rendering paths → blank canvas. Fix: remove `--disable-software-rasterizer`.
+- **Working Chromium flags**: `--no-sandbox --disable-gpu --disable-dev-shm-usage --password-store=basic --renderer-process-limit=1`
 
-### Pi Kiosk Autostart & Performance (2026-07-10 — Session 3)
-- **Root cause of no-browser issue**: Pi OS Bookworm uses `rpd-labwc` (Wayland), not LXDE. All previous autostart work targeted `~/.config/lxsession/LXDE-pi/autostart` which is never read.
-- **Fix**: Write to `~/.config/labwc/autostart` — labwc's shell script autostart
-- **Autostart command**: `sleep 15 && DISPLAY=:0 chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --kiosk http://localhost:8001 &`
-- **setup_autostart.sh** updated to detect `rpd-labwc` session from lightdm.conf and write correct file
-- **install.sh** updated to detect kiosk user even when run as direct root (not sudo)
-- **Map background missing on Pi**: `us-states-10m.json` not in old build — fix: `cp frontend/public/us-states-10m.json frontend/build/`
-- **Dashboard KPI fixes**: vendor-status now background-cached (120s), summary endpoint reads Vivantio cache for ticket counts, frontend loads KPI cards independently of slow vendor pings
-
-
-- **Root cause identified**: Chromium GPU process crash (`exit_code=11` / SIGSEGV) on Pi 4 VideoCore driver
-- `kiosk.sh` — added `--disable-gpu`, `--disable-gpu-sandbox`, `--disable-dev-shm-usage`, `--renderer-process-limit=1`, `--disable-background-networking`
-- `MapEmbed.jsx` — switched from full mesh (36 pairs, stroke-dashoffset CPU animation) → hub-and-spoke (8 lines, opacity animation). Animated elements: 72 → 16 (78% reduction)
-- `NetworkMap.jsx` — kept full mesh but only backbone lines animate (Novi/Azure endpoints, 15 pairs); non-backbone lines are static. Animated elements: 72 → ~30 (58% reduction)
-- All animations now use CSS `opacity` + `willChange: "opacity"` (GPU composited, zero CPU repaint). No `stroke-dashoffset` anywhere.
-- `setup_autostart.sh` — new standalone script; uses Python to write LXDE autostart file (no heredoc/session issues)
-
-- `install.sh` — full Raspberry Pi install: Node 18, Python deps, React build, systemd service, kiosk LXDE autostart
-- `start.sh` / `kiosk.sh` — foreground launcher + Chromium kiosk with readiness check
-- `backend/.env.example` — Pi .env template; `README-PI.md` — full deployment + troubleshooting guide
-- `server.py` — added `StaticFiles` + SPA catch-all: FastAPI serves built React at port 8001 (no Node dev server on Pi)
-- `requirements.txt` — `aiofiles>=23.2.1` added; deployment check: PASS (0 blockers)
-
-### WUG Network Topology (NEW — 2026-07-09)
+### WUG Network Topology
 - New tab: **WUG** — circuit-board style hierarchical topology per location
-- 5 locations: Novi HQ, Remus, Mt. Pleasant, Constantine, Canton
-- Per-location SVG tree: gateway → core switch → access switches → APs
-- Type colors: Gateway=cyan, Core Switch=green, Switch=blue, AP=amber
-- Orthogonal elbow connectors with flowing data-pulse animation
-- Down device: red pulsing glow + DOWN label
-- Device Roster panel below topologies: all 27 devices with status/IP/location
 - **DEMO DATA ACTIVE** — WUG API not yet connected (backend stub at `/api/wug/topology`)
-- WUG credentials fields added to settings.yml: `wug_url`, `wug_username`, `wug_password`
-- Tomorrow: wire up real WUG REST API (`/api/v1/device/-1/devices`, `/api/v1/networkmap/{id}/data`)
 
 ### UniFi Devices Page
-- Auto-detect UniFi OS vs Legacy API
-- Devices grouped by type (Switch, AP, Camera, etc.)
-- Offline devices sorted to TOP of each group
-- ?demo=true query param for UI preview without live controller
+- Auto-detect UniFi OS vs Legacy API, grouped by type, offline sorted to top
 
 ### Alerts Page
-- Default: unacknowledged + Critical/Warning only (no Info)
-- Acknowledge → removes from default view
-- All alerts come from real sources only (WUG email, Wazuh, manual)
+- Unacknowledged + Critical/Warning only by default, acknowledge removes from view
 
 ## Pending / Upcoming Work
 
 ### P1 — Next
-- Enter Downdetector client_id + client_secret in settings.yml or Settings page to unlock all 21 vendor status feeds
-- Raspberry Pi deployment instructions + start.sh script
+- WUG REST API integration (blocked: user providing credentials)
+- Downdetector client_id + client_secret
 
 ### P2 — Soon
-- Automated DIA circuit ping check every 60s → auto-flip status to DOWN if ICMP unreachable
+- Automated DIA circuit ping check every 60s
 - Wazuh configuration (needs credentials for 10.202.10.70)
-- WUG email IMAP configuration
 
 ### P3 — Backlog
-- UniFi Protect camera API integration (separate from Network controller)
-- Kiosk auto-rotation testing on actual Pi hardware
-- Alerts persistence across restarts (optional flat file)
+- UniFi Protect camera API integration
+- Alerts persistence across restarts (flat file)
 
 ## Key API Endpoints
 - `GET /api/dashboard/summary` — KPI counts
-- `GET /api/circuits` — DIA circuits (from circuits.yml, Aruba status overlay if connected)
-- `GET /api/sites` — site status with coordinates for map
+- `GET /api/circuits` — DIA circuits
+- `GET /api/sites` — site status with coordinates
 - `GET /api/alerts?acknowledged=false` — active alerts
 - `GET /api/vivantio/tickets` — live Vivantio tickets
-- `GET /api/vendor-status` — 21 vendor statuses + DD token state
-- `GET /api/wug/topology` — WUG device topology per location (stub — returns empty until API connected)
-- `GET /api/unifi/devices[?demo=true]` — UniFi devices from controller(s)
-- `GET /api/aruba/mesh` — SD-WAN tunnel topology
+- `GET /api/vendor-status` — 21 vendor statuses
+- `GET /api/wug/topology` — WUG topology (stub until API connected)
+- `GET /api/unifi/devices[?demo=true]` — UniFi devices
 - `GET/PUT /api/settings` — read/write settings.yml
