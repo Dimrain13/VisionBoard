@@ -46,8 +46,8 @@ fi
 
 # ─── 3. Python dependencies ───────────────────────────────────────
 step "Python dependencies"
-python3 -m pip install --quiet --upgrade pip
-python3 -m pip install --quiet -r "$REPO_DIR/backend/requirements.txt"
+python3 -m pip install --quiet --upgrade pip --break-system-packages
+python3 -m pip install --quiet -r "$REPO_DIR/backend/requirements.txt" --break-system-packages
 info "Python packages installed"
 
 # ─── 4. Environment files ─────────────────────────────────────────
