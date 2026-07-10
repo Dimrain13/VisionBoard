@@ -168,15 +168,15 @@ export default function NetworkMap() {
               }
             </Geographies>
 
-            {/* ── Keyframe: opacity only = GPU-composited, no CPU repaint ── */}
+            {/* ── Keyframe: flowing traffic dashoffset march ── */}
             <defs>
               <style>{`
-                @keyframes mesh-up   { 0%,100%{opacity:0.55} 50%{opacity:0.85} }
-                @keyframes mesh-down { 0%,100%{opacity:0.30} 50%{opacity:0.90} }
+                @keyframes traffic-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -24; } }
+                @keyframes wan-down     { 0%,100%{opacity:.3} 50%{opacity:.85} }
               `}</style>
             </defs>
 
-            {/* Full mesh lines — backbone animates, non-backbone is static (Pi-friendly) */}
+            {/* Full mesh lines — all lines flow; backbone brighter/thicker */}
             {effectiveLinks.map((link, i) => {
               const src = SITES[link.src]?.coords;
               const dst = SITES[link.dst]?.coords;
@@ -185,28 +185,30 @@ export default function NetworkMap() {
               const color    = isDown ? "#FF2A2A" : "#00FF66";
               const backbone = link.src === "Novi" || link.dst === "Novi" ||
                                link.src === "Azure" || link.dst === "Azure";
-              const strokeW  = backbone ? (isDown ? 1.4 : 0.9) : (isDown ? 0.9 : 0.5);
-              const baseOp   = backbone ? (isDown ? 0.22 : 0.07) : (isDown ? 0.18 : 0.05);
-              // Staggered negative delay so backbone lines don't all pulse in sync
-              const delay    = `-${((i * 0.3) % 3.0).toFixed(1)}s`;
-
+              const baseW  = backbone ? 0.65 : 0.30;
+              const flowW  = backbone ? 1.0  : 0.55;
+              const opBase = backbone ? 0.08 : 0.05;
+              const opFlow = backbone ? 0.65 : 0.35;
+              const dur    = backbone ? 2.2  : 3.0;
+              const delay  = `-${((i * 0.18) % dur).toFixed(2)}s`;
               return (
                 <g key={i}>
-                  {/* Ghost base — always static, no animation */}
+                  {/* Static ghost base */}
                   <Line from={src} to={dst} stroke={color}
-                    strokeWidth={strokeW * 0.4} strokeOpacity={baseOp} strokeLinecap="round" />
-                  {/* Active line — backbone: opacity animation; non-backbone: static */}
-                  <Line from={src} to={dst} stroke={color}
-                    strokeWidth={strokeW} strokeLinecap="round"
-                    style={backbone ? {
-                      animation: isDown
-                        ? `mesh-down 1.6s ease-in-out ${delay} infinite`
-                        : `mesh-up 3.0s ease-in-out ${delay} infinite`,
-                      willChange: "opacity",
-                    } : {
-                      opacity: isDown ? 0.55 : 0.30,
-                    }}
-                  />
+                    strokeWidth={isDown ? baseW * 2.5 : baseW}
+                    strokeOpacity={isDown ? 0.18 : opBase} strokeLinecap="round" />
+                  {/* Flowing packets */}
+                  {!isDown && (
+                    <Line from={src} to={dst} stroke={color}
+                      strokeWidth={flowW} strokeDasharray="4 20" strokeLinecap="round"
+                      style={{ animation:`traffic-flow ${dur}s linear ${delay} infinite`, opacity:opFlow }} />
+                  )}
+                  {/* Down — pulsing red */}
+                  {isDown && (
+                    <Line from={src} to={dst} stroke={color} strokeWidth={baseW * 3}
+                      strokeLinecap="round"
+                      style={{ animation:`wan-down 1.8s ease-in-out ${delay} infinite`, opacity:0.6 }} />
+                  )}
                 </g>
               );
             })}

@@ -1,9 +1,11 @@
 /**
  * MapEmbed — geographic NOC topology map for the Dashboard.
- * Hub-and-spoke: Novi HQ → every other site (8 lines vs 36 full-mesh).
- * Uses opacity animation (GPU-composited) instead of stroke-dashoffset (CPU paint).
- *   Green pulse  = WAN up
- *   Red pulse    = either endpoint WAN is DOWN
+ * Full mesh: every site connected to every other site with flowing traffic animation.
+ *   Green flowing packets = WAN up
+ *   Red pulse            = either endpoint WAN is DOWN
+ *
+ * Performance note: --disable-gpu in kiosk.sh eliminates the Pi 4 GPU crash.
+ * Skia software rasterizer handles these thin dashed paths cleanly.
  */
 import React, { useState, useEffect } from "react";
 import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
@@ -29,11 +31,12 @@ const SITES = {
   "Azure":            { coords: [-87.63,  41.88 ], cloud: true},
 };
 
-// Hub-and-spoke: Novi → every other site (8 lines total — much lighter than 36-line full mesh)
+// Full mesh: every site ↔ every other site
 const SITE_KEYS = Object.keys(SITES);
-const SPOKES = SITE_KEYS
-  .filter(k => k !== "Novi")
-  .map((k, idx) => ({ src: "Novi", dst: k, idx }));
+const MESH_PAIRS = [];
+for (let i = 0; i < SITE_KEYS.length; i++)
+  for (let j = i + 1; j < SITE_KEYS.length; j++)
+    MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j] });
 
 function normalize(name) {
   return (name || "").replace(/\s+plant$/i, "").trim();
@@ -79,8 +82,8 @@ export default function MapEmbed({ sites = [] }) {
     >
       <defs>
         <style>{`
-          @keyframes spoke-up   { 0%,100%{opacity:0.25} 50%{opacity:0.70} }
-          @keyframes spoke-down { 0%,100%{opacity:0.30} 50%{opacity:0.90} }
+          @keyframes traffic-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -24; } }
+          @keyframes wan-down     { 0%,100%{opacity:.3} 50%{opacity:.85} }
         `}</style>
       </defs>
 
@@ -99,31 +102,52 @@ export default function MapEmbed({ sites = [] }) {
         }
       </Geographies>
 
-      {/* Hub-and-spoke: Novi → 8 sites (opacity animation = GPU composited, no CPU repaint) */}
-      {SPOKES.map(({ src, dst, idx }) => {
-        const srcC  = SITES[src]?.coords;
-        const dstC  = SITES[dst]?.coords;
+      {/* Full mesh: every site ↔ every other site with flowing traffic */}
+      {MESH_PAIRS.map(({ src, dst }, i) => {
+        const srcC = SITES[src]?.coords;
+        const dstC = SITES[dst]?.coords;
         if (!srcC || !dstC) return null;
 
-        const down  = isWanDown(normalize(dst));
+        const down  = isWanDown(normalize(src)) || isWanDown(normalize(dst));
         const color = down ? "#FF2A2A" : "#00FF66";
-        const w     = dst === "Azure" ? 1.0 : 0.75;
-        // Negative delay = start partway through cycle so lines don't all pulse together
-        const delay = `-${((idx * 0.45) % 3.0).toFixed(2)}s`;
+
+        // Backbone lines (Novi or Azure endpoints) are slightly more prominent
+        const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
+        const baseW    = backbone ? 0.65 : 0.30;
+        const flowW    = backbone ? 1.0  : 0.55;
+        const opBase   = backbone ? 0.08 : 0.05;
+        const opFlow   = backbone ? 0.65 : 0.35;
+        const dur      = backbone ? 2.2  : 3.0;
+        // Stagger start position so all lines don't pulse in sync
+        const delay    = `-${((i * 0.18) % dur).toFixed(2)}s`;
 
         return (
-          <g key={`spoke-${dst}`}>
-            {/* Static ghost base — no animation, pure fill */}
-            <Line from={srcC} to={dstC} stroke={color} strokeWidth={w * 0.35} opacity={0.07} />
-            {/* Opacity-animated active line — GPU composited, zero CPU repaint */}
-            <Line from={srcC} to={dstC} stroke={color} strokeWidth={w}
-              style={{
-                animation: down
-                  ? `spoke-down 1.6s ease-in-out ${delay} infinite`
-                  : `spoke-up 3.0s ease-in-out ${delay} infinite`,
-                willChange: "opacity",
-              }}
-            />
+          <g key={`m-${src}-${dst}`}>
+            {/* Ghost base trace — static, no animation */}
+            <Line from={srcC} to={dstC}
+              stroke={color} strokeWidth={down ? baseW * 2.5 : baseW}
+              opacity={down ? 0.18 : opBase} />
+            {/* Flowing traffic packets — dashoffset march along the line */}
+            {!down && (
+              <Line from={srcC} to={dstC}
+                stroke={color} strokeWidth={flowW}
+                strokeDasharray="4 20"
+                style={{
+                  animation: `traffic-flow ${dur}s linear ${delay} infinite`,
+                  opacity: opFlow,
+                }}
+              />
+            )}
+            {/* Pulsing red when WAN is down */}
+            {down && (
+              <Line from={srcC} to={dstC}
+                stroke={color} strokeWidth={baseW * 3}
+                style={{
+                  animation: `wan-down 1.8s ease-in-out ${delay} infinite`,
+                  opacity: 0.6,
+                }}
+              />
+            )}
           </g>
         );
       })}
