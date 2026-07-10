@@ -1495,3 +1495,30 @@ def _vivantio_summary(tickets: list, configured: bool) -> dict:
 
 
 app.include_router(api_router)
+
+# ─── Serve built React frontend (Pi / production deployment) ──────
+# When `frontend/build/` exists (i.e. after `yarn build`), FastAPI serves the
+# full SPA on port 8001 so no separate Node dev-server is needed on the Pi.
+_BUILD = Path(__file__).parent.parent / "frontend" / "build"
+if _BUILD.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse as _FileResponse
+
+    _STATIC = _BUILD / "static"
+    if _STATIC.is_dir():
+        app.mount("/static", StaticFiles(directory=str(_STATIC)), name="react_static")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def _favicon():
+        return _FileResponse(str(_BUILD / "favicon.ico"))
+
+    @app.get("/manifest.json", include_in_schema=False)
+    async def _manifest():
+        return _FileResponse(str(_BUILD / "manifest.json"))
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _spa(full_path: str):
+        """Catch-all: return index.html so React Router handles all paths."""
+        return _FileResponse(str(_BUILD / "index.html"))
+
+    logger.info("Serving built React app from %s", _BUILD)
