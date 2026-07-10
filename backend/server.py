@@ -86,6 +86,7 @@ def save_circuits(circuits: list):
 _alerts_store: list = []
 _tickets_store: list = []
 _unifi_events_store: list = []  # ring buffer, max 500
+_vendor_cache: dict = {"vendors": [], "ts": 0}  # background-refreshed every 120s
 
 
 # ─── Models ───────────────────────────────────────────────────────
@@ -736,6 +737,7 @@ async def lifespan(app: FastAPI):
     dd_task      = asyncio.create_task(background_dd_token_refresher())
     unifi_task   = asyncio.create_task(background_unifi_warmer())
     ping_task    = asyncio.create_task(background_circuit_pinger())
+    vendor_task  = asyncio.create_task(background_vendor_warmer())
 
     syslog_port = int(load_settings().get("unifi_syslog_port", 5140))
     transport = None
@@ -751,11 +753,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task):
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task, vendor_task):
         task.cancel()
     if transport:
         transport.close()
-    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task):
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task, vendor_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -783,7 +785,9 @@ async def root():
 async def dashboard_summary():
     alerts   = _alerts_store
     circuits = (await get_aruba_circuits_live()) or load_circuits()
-    tickets  = _tickets_store
+    # Use Vivantio cache for ticket counts (populated by background warmer)
+    vivantio_tickets = _vivantio_cache.get("tickets") or []
+    tickets_all = vivantio_tickets + _tickets_store  # vivantio + any manual tickets
     return {
         "alerts": {
             "total": len(alerts),
@@ -799,10 +803,10 @@ async def dashboard_summary():
             "degraded": sum(1 for c in circuits if c["status"] == "degraded"),
         },
         "tickets": {
-            "total": len(tickets),
-            "open": sum(1 for t in tickets if t["status"] == "open"),
-            "in_progress": sum(1 for t in tickets if t["status"] == "in_progress"),
-            "critical": sum(1 for t in tickets if t["priority"] == "critical"),
+            "total": len(tickets_all),
+            "open": sum(1 for t in tickets_all if t.get("status") == "open"),
+            "in_progress": sum(1 for t in tickets_all if t.get("status") == "in_progress"),
+            "critical": sum(1 for t in tickets_all if t.get("priority") == "critical"),
         },
     }
 
@@ -1137,11 +1141,6 @@ async def get_vendor_status():
     dd_id     = settings.get("downdetector_client_id", "")
     dd_secret = settings.get("downdetector_client_secret", "")
 
-    dd_token = None
-    if dd_id and dd_secret:
-        dd_token = await _dd_get_token(dd_id, dd_secret)
-
-    # Build token health info for the UI
     now = time.time()
     dd_status = {
         "configured": bool(dd_id and dd_secret),
@@ -1149,9 +1148,40 @@ async def get_vendor_status():
         "next_refresh_in_s": max(0, int(_dd_token_cache.get("expires_at", 0) - now - 60)) if _dd_token_cache.get("expires_at") else None,
     }
 
+    # Return from background cache if available (avoids 21 live requests per call)
+    if _vendor_cache["vendors"]:
+        return {"vendors": _vendor_cache["vendors"], "dd_status": dd_status}
+
+    # First-ever call: fetch live and warm the cache
+    dd_token = None
+    if dd_id and dd_secret:
+        dd_token = await _dd_get_token(dd_id, dd_secret)
     tasks = [check_vendor_status(v, dd_token) for v in VENDORS]
     results = await asyncio.gather(*tasks)
+    _vendor_cache["vendors"] = list(results)
+    _vendor_cache["ts"] = time.time()
     return {"vendors": list(results), "dd_status": dd_status}
+
+
+async def background_vendor_warmer():
+    """Refresh vendor HTTP-ping status every 120s in the background."""
+    await asyncio.sleep(15)  # let other warmers start first
+    while True:
+        try:
+            settings  = load_settings()
+            dd_id     = settings.get("downdetector_client_id", "")
+            dd_secret = settings.get("downdetector_client_secret", "")
+            dd_token  = None
+            if dd_id and dd_secret:
+                dd_token = await _dd_get_token(dd_id, dd_secret)
+            tasks   = [check_vendor_status(v, dd_token) for v in VENDORS]
+            results = await asyncio.gather(*tasks)
+            _vendor_cache["vendors"] = list(results)
+            _vendor_cache["ts"]      = time.time()
+            logger.info(f"Vendor cache refreshed: {len(results)} vendors")
+        except Exception as e:
+            logger.warning(f"Vendor warmer error: {e}")
+        await asyncio.sleep(120)
 
 
 # ─── Sites ────────────────────────────────────────────────────────

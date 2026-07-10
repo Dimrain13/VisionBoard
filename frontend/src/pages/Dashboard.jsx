@@ -84,24 +84,26 @@ export default function Dashboard() {
 
   const loadAll = useCallback(async () => {
     try {
-      const [s, a, v, t, si] = await Promise.all([
+      // Load KPI + content endpoints first — show dashboard immediately
+      const [s, a, t, si] = await Promise.all([
         axios.get(`${API}/dashboard/summary`),
         axios.get(`${API}/alerts`, { params: { acknowledged: false } }),
-        axios.get(`${API}/vendor-status`),
         axios.get(`${API}/vivantio/tickets`),
         axios.get(`${API}/sites`),
       ]);
       setSummary(s.data);
-      // Only show critical and warning alerts — no info
       const rawAlerts = a.data.items || [];
       setAlerts(rawAlerts.filter(al => al.severity !== "info").slice(0, 10));
-      // vendor-status now returns { vendors, dd_status } — support both shapes
-      setVendors(Array.isArray(v.data) ? v.data : (v.data.vendors || []));
-      // Vivantio tickets — top 5 by priority
       setTickets((t.data.tickets || []).slice(0, 5));
       setSites(si.data);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("KPI load error:", e); }
     finally { setLoading(false); }
+
+    // Vendor status loads separately — 21 external pings, don't block main UI
+    try {
+      const v = await axios.get(`${API}/vendor-status`);
+      setVendors(Array.isArray(v.data) ? v.data : (v.data.vendors || []));
+    } catch (e) { console.error("Vendor status error:", e); }
   }, []);
 
   useEffect(() => {
