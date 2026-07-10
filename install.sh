@@ -28,9 +28,9 @@ sudo apt-get install -y -qq curl wget git unclutter xdotool
 # ─── 2. Node.js 18 ────────────────────────────────────────────────
 step "Node.js 18"
 NODE_VER=$(node -v 2>/dev/null | cut -d. -f1 | tr -d v || echo 0)
-if [ "$NODE_VER" -lt 18 ] 2>/dev/null; then
-  info "Installing Node.js 18 (ARM64)..."
-  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+if [ "$NODE_VER" -lt 20 ] 2>/dev/null; then
+  info "Installing Node.js 20 LTS (ARM64)..."
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
   sudo apt-get install -y nodejs
 else
   info "Node.js $(node -v) already installed — skipping"
@@ -93,7 +93,7 @@ cd "$REPO_DIR/frontend"
 # Bypass corporate SSL inspection for yarn registry calls
 yarn config set strict-ssl false 2>/dev/null || true
 npm config set strict-ssl false
-yarn install --frozen-lockfile --silent
+yarn install --frozen-lockfile --ignore-engines --silent
 yarn build
 info "Frontend built → frontend/build/"
 cd "$REPO_DIR"
