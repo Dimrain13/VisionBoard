@@ -56,7 +56,7 @@ if echo "$SESSION" | grep -qi "labwc\|wayland"; then
   LABWC_AUTOSTART="$LABWC_DIR/autostart"
   # Remove old entry if present, then re-add
   [ -f "$LABWC_AUTOSTART" ] && sed -i '/kiosk\.sh/d' "$LABWC_AUTOSTART" || true
-  echo "bash $REPO_DIR/start-kiosk.sh &" >> "$LABWC_AUTOSTART"
+  echo "bash $REPO_DIR/kiosk.sh &" >> "$LABWC_AUTOSTART"
   if [ "$(id -u)" -eq 0 ]; then
     chown -R "$TARGET_USER":"$TARGET_USER" "$LABWC_DIR"
   fi
