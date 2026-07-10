@@ -72,6 +72,10 @@ else
   info "frontend/.env already configured"
 fi
 
+# settings.yml and circuits.yml come from git — do NOT overwrite them
+info "backend/settings.yml — credentials already configured in repo (Vivantio, UniFi, etc.)"
+warn "  → Update backend/circuits.yml with your real WAN IPs before going live"
+
 # ─── 5. Build React frontend ──────────────────────────────────────
 step "Build React frontend (this takes 5–15 min on a Pi 4)"
 cd "$REPO_DIR/frontend"

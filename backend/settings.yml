@@ -16,6 +16,13 @@ email_password: ""
 email_folder: "INBOX"
 wug_sender_filter: "whatsupgold"
 
+# ── WUG (WhatsUp Gold) REST API ──────────────────────────
+# Fill in once API access is available
+wug_url: ""
+wug_username: ""
+wug_password: ""
+wug_poll_interval: 60
+
 # ── Vivantio ITSM ────────────────────────────────────────
 vivantio_api_url: "https://mimilk.api.vivantio.com"
 vivantio_api_key: "api_MichiganMilkProducersAssociation_wfF2GF8BfV@mimilk.com"

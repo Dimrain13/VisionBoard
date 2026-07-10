@@ -30,34 +30,22 @@ The script will:
 
 ### 1. API Credentials — `backend/settings.yml`
 
-Edit this file to add your real credentials:
+Most credentials are **already configured** in the repo. Verify or update:
 
 ```yaml
-# Vivantio ITSM
-vivantio_api_url: "https://YOUR_TENANT.vivantiotech.com"
-vivantio_api_key: "YOUR_API_KEY"
-vivantio_password: "YOUR_PASSWORD"
+# Already set:
+vivantio_api_url: "https://mimilk.api.vivantio.com"   ✅
+vivantio_api_key: "..."                                ✅
+unifi_controller1_url: "https://unifi.mimilk.com:8443" ✅
+unifi_controller1_username: "noc-readonly"             ✅
 
-# Downdetector Enterprise (optional — enables all 21 vendor feeds)
-downdetector_client_id: "YOUR_CLIENT_ID"
-downdetector_client_secret: "YOUR_CLIENT_SECRET"
+# Still needed — fill these in:
+downdetector_client_id: ""      ← add when available
+downdetector_client_secret: ""  ← add when available
 
-# UniFi Network Controller (LAN access only)
-unifi_controller1_url: "https://unifi.mimilk.com:8443"
-unifi_controller1_username: "YOUR_USERNAME"
-unifi_controller1_password: "YOUR_PASSWORD"
-unifi_controller1_site: "default"
-unifi_controller1_label: "Mimilk"
-
-# WUG (WhatsUp Gold) — API integration pending
-wug_url: "http://YOUR_WUG_SERVER"
-wug_username: "YOUR_USERNAME"
-wug_password: "YOUR_PASSWORD"
-
-# Wazuh SIEM
-wazuh_url: "10.202.10.70"
-wazuh_username: "YOUR_USERNAME"
-wazuh_password: "YOUR_PASSWORD"
+wug_url: ""                     ← add tomorrow after API access
+wug_username: ""
+wug_password: ""
 ```
 
 ### 2. WAN Circuit IPs — `backend/circuits.yml`
