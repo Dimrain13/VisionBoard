@@ -67,7 +67,14 @@ Create a dashboard in Python/React to display important IT information at a glan
 - DD token retries 3× (10s apart) before logging error; no Statuspage.io fallback
 - `source` field in API response: `"downdetector"` | `"http_check"` | `"none"`
 
-### Pi Deployment (2026-07-10)
+### Pi Performance & Kiosk Stability (2026-07-10 — Session 2)
+- **Root cause identified**: Chromium GPU process crash (`exit_code=11` / SIGSEGV) on Pi 4 VideoCore driver
+- `kiosk.sh` — added `--disable-gpu`, `--disable-gpu-sandbox`, `--disable-dev-shm-usage`, `--renderer-process-limit=1`, `--disable-background-networking`
+- `MapEmbed.jsx` — switched from full mesh (36 pairs, stroke-dashoffset CPU animation) → hub-and-spoke (8 lines, opacity animation). Animated elements: 72 → 16 (78% reduction)
+- `NetworkMap.jsx` — kept full mesh but only backbone lines animate (Novi/Azure endpoints, 15 pairs); non-backbone lines are static. Animated elements: 72 → ~30 (58% reduction)
+- All animations now use CSS `opacity` + `willChange: "opacity"` (GPU composited, zero CPU repaint). No `stroke-dashoffset` anywhere.
+- `setup_autostart.sh` — new standalone script; uses Python to write LXDE autostart file (no heredoc/session issues)
+
 - `install.sh` — full Raspberry Pi install: Node 18, Python deps, React build, systemd service, kiosk LXDE autostart
 - `start.sh` / `kiosk.sh` — foreground launcher + Chromium kiosk with readiness check
 - `backend/.env.example` — Pi .env template; `README-PI.md` — full deployment + troubleshooting guide
