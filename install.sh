@@ -39,15 +39,28 @@ fi
 # Install / upgrade yarn
 if ! command -v yarn &>/dev/null; then
   info "Installing Yarn..."
-  sudo npm install -g yarn
+  npm config set strict-ssl false
+  sudo npm install -g yarn --legacy-peer-deps
 else
   info "Yarn $(yarn -v) already installed"
 fi
 
 # ─── 3. Python dependencies ───────────────────────────────────────
 step "Python dependencies"
-python3 -m pip install --quiet --upgrade pip --break-system-packages
-python3 -m pip install --quiet -r "$REPO_DIR/backend/requirements.txt" --break-system-packages
+# --trusted-host flags handle corporate SSL inspection proxies
+# --break-system-packages required on Debian Trixie / Pi OS (Bookworm+)
+python3 -m pip install --quiet \
+  --trusted-host pypi.org \
+  --trusted-host files.pythonhosted.org \
+  --trusted-host pypi.python.org \
+  --break-system-packages \
+  --upgrade pip
+python3 -m pip install --quiet \
+  --trusted-host pypi.org \
+  --trusted-host files.pythonhosted.org \
+  --trusted-host pypi.python.org \
+  --break-system-packages \
+  -r "$REPO_DIR/backend/requirements.txt"
 info "Python packages installed"
 
 # ─── 4. Environment files ─────────────────────────────────────────
@@ -79,6 +92,9 @@ warn "  → Update backend/circuits.yml with your real WAN IPs before going live
 # ─── 5. Build React frontend ──────────────────────────────────────
 step "Build React frontend (this takes 5–15 min on a Pi 4)"
 cd "$REPO_DIR/frontend"
+# Bypass corporate SSL inspection for yarn registry calls
+yarn config set strict-ssl false 2>/dev/null || true
+npm config set strict-ssl false
 yarn install --frozen-lockfile --silent
 yarn build
 info "Frontend built → frontend/build/"
