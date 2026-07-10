@@ -67,7 +67,16 @@ Create a dashboard in Python/React to display important IT information at a glan
 - DD token retries 3× (10s apart) before logging error; no Statuspage.io fallback
 - `source` field in API response: `"downdetector"` | `"http_check"` | `"none"`
 
-### Pi Performance & Kiosk Stability (2026-07-10 — Session 2)
+### Pi Kiosk Autostart & Performance (2026-07-10 — Session 3)
+- **Root cause of no-browser issue**: Pi OS Bookworm uses `rpd-labwc` (Wayland), not LXDE. All previous autostart work targeted `~/.config/lxsession/LXDE-pi/autostart` which is never read.
+- **Fix**: Write to `~/.config/labwc/autostart` — labwc's shell script autostart
+- **Autostart command**: `sleep 15 && DISPLAY=:0 chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --kiosk http://localhost:8001 &`
+- **setup_autostart.sh** updated to detect `rpd-labwc` session from lightdm.conf and write correct file
+- **install.sh** updated to detect kiosk user even when run as direct root (not sudo)
+- **Map background missing on Pi**: `us-states-10m.json` not in old build — fix: `cp frontend/public/us-states-10m.json frontend/build/`
+- **Dashboard KPI fixes**: vendor-status now background-cached (120s), summary endpoint reads Vivantio cache for ticket counts, frontend loads KPI cards independently of slow vendor pings
+
+
 - **Root cause identified**: Chromium GPU process crash (`exit_code=11` / SIGSEGV) on Pi 4 VideoCore driver
 - `kiosk.sh` — added `--disable-gpu`, `--disable-gpu-sandbox`, `--disable-dev-shm-usage`, `--renderer-process-limit=1`, `--disable-background-networking`
 - `MapEmbed.jsx` — switched from full mesh (36 pairs, stroke-dashoffset CPU animation) → hub-and-spoke (8 lines, opacity animation). Animated elements: 72 → 16 (78% reduction)
