@@ -29,12 +29,17 @@ export default function Layout({ children }) {
   kioskIntervalRef.current = kioskInterval;
   isPausedRef.current      = isPaused;
 
-  // Load kiosk settings once on mount
+  // Load kiosk settings and re-poll every 60s so YAML changes take effect without restart
   useEffect(() => {
-    axios.get(`${API}/settings`).then(res => {
-      setKioskEnabled(res.data.kiosk_enabled  ?? false);
-      setKioskInterval(res.data.kiosk_interval ?? 30);
-    }).catch(() => {});
+    const fetchSettings = () => {
+      axios.get(`${API}/settings`).then(res => {
+        setKioskEnabled(res.data.kiosk_enabled  ?? false);
+        setKioskInterval(res.data.kiosk_interval ?? 30);
+      }).catch(() => {});
+    };
+    fetchSettings();
+    const poll = setInterval(fetchSettings, 60000);
+    return () => clearInterval(poll);
   }, []);
 
   // Reset tick whenever the URL changes (e.g. manual nav or after auto-rotation)
