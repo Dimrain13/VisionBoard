@@ -62,9 +62,12 @@ info "Python packages installed"
 step "Environment files"
 
 if [ ! -f "$REPO_DIR/backend/.env" ]; then
-  info "Creating backend/.env from template..."
-  cp "$REPO_DIR/backend/.env.example" "$REPO_DIR/backend/.env"
-  warn "Edit backend/.env if needed (CORS_ORIGINS etc.)"
+  info "Creating backend/.env..."
+  cat > "$REPO_DIR/backend/.env" <<EOF
+MONGO_URL=mongodb://localhost:27017
+DB_NAME=itdashboard
+CORS_ORIGINS=*
+EOF
 else
   info "backend/.env already exists — skipping"
 fi
