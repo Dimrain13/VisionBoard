@@ -19,9 +19,9 @@ const SITES = {
   "Mt. Pleasant":     { coords: [-84.774, 43.603]             },
   "Ovid":             { coords: [-84.370, 43.009]             },
   "Middlebury":       { coords: [-85.960, 41.630]             },
-  "Canton Warehouse": { coords: [-81.536, 40.450]             },
-  "Constantine":      { coords: [-84.950, 42.050]             },
-  "Canton":           { coords: [-80.980, 41.100]             },
+  "Canton Warehouse": { coords: [-81.580, 40.530]             },
+  "Constantine":      { coords: [-85.480, 41.950]             },
+  "Canton":           { coords: [-81.220, 40.980]             },
   "Azure":            { coords: [-87.63,  41.88 ], cloud: true},
 };
 

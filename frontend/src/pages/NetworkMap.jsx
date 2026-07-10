@@ -25,9 +25,9 @@ const SITES = {
   "Novi":             { coords: [-83.476, 42.481] },
   "Azure":            { coords: [-87.63,  41.88 ] },
   "Middlebury":       { coords: [-85.960, 41.630] },
-  "Canton Warehouse": { coords: [-81.536, 40.450] },
-  "Constantine":      { coords: [-84.950, 42.050] },
-  "Canton":           { coords: [-80.980, 41.100] },
+  "Canton Warehouse": { coords: [-81.580, 40.530] },
+  "Constantine":      { coords: [-85.480, 41.950] },
+  "Canton":           { coords: [-81.220, 40.980] },
 };
 
 // Static mesh fallback used when Aruba API returns no tunnel data.
