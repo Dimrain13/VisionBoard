@@ -21,26 +21,38 @@ for i in $(seq 1 90); do
 done
 echo "Backend ready, launching Chromium..."
 
-# Remove stale singleton locks
-rm -f "$HOME/.config/chromium/SingletonLock" \
-       "$HOME/.config/chromium/SingletonCookie" 2>/dev/null
+PROFILE_DIR="$HOME/.config/chromium"
+for LOCK in \
+  "$PROFILE_DIR/SingletonLock" \
+  "$PROFILE_DIR/SingletonCookie" \
+  "$PROFILE_DIR/Default/Last Session" \
+  "$PROFILE_DIR/Default/Last Tabs"; do
+  [ -f "$LOCK" ] && rm -f "$LOCK" && echo "Removed stale lock: $LOCK"
+done
 
-# Use DISPLAY=:0 (XWayland) — same as the manual command that works reliably.
-# --ozone-platform=wayland omitted: WAYLAND_DISPLAY not reliably set this early in boot.
-export DISPLAY=:0
+# ── Launch Chromium — restart loop so crashes auto-recover ───────────────────
+echo "Launching Chromium..."
+while true; do
+  rm -f "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" 2>/dev/null
 
-exec chromium \
-  --no-sandbox \
-  --disable-gpu \
-  --disable-dev-shm-usage \
-  --password-store=basic \
-  --renderer-process-limit=1 \
-  --disable-background-networking \
-  --kiosk \
-  --noerrdialogs \
-  --disable-infobars \
-  --no-first-run \
-  --disable-restore-session-state \
-  --disable-session-crashed-bubble \
-  --disable-crash-reporter \
-  http://localhost:8001
+  chromium \
+    --no-sandbox \
+    --disable-gpu \
+    --disable-dev-shm-usage \
+    --password-store=basic \
+    --renderer-process-limit=1 \
+    --disable-background-networking \
+    --disable-extensions \
+    --js-flags="--max-old-space-size=192" \
+    --kiosk \
+    --noerrdialogs \
+    --disable-infobars \
+    --no-first-run \
+    --disable-restore-session-state \
+    --disable-session-crashed-bubble \
+    --disable-crash-reporter \
+    http://localhost:8001
+
+  echo "Chromium exited ($(date)) — restarting in 5s..."
+  sleep 5
+done

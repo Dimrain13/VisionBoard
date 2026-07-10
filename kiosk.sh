@@ -74,28 +74,42 @@ else
   echo "Display: X11 ($DISPLAY)"
 fi
 
-# ── Launch Chromium ───────────────────────────────────────────────────────────
+# ── Launch Chromium — restart loop so crashes auto-recover ───────────────────
 echo "Launching $CHROMIUM ($PLATFORM) at $URL ..."
-exec "$CHROMIUM" \
-  --ozone-platform="$PLATFORM" \
-  --no-sandbox \
-  --disable-gpu \
-  --disable-dev-shm-usage \
-  --renderer-process-limit=1 \
-  --disable-background-networking \
-  --kiosk \
-  --noerrdialogs \
-  --disable-infobars \
-  --disable-session-crashed-bubble \
-  --disable-component-update \
-  --disable-restore-session-state \
-  --no-first-run \
-  --start-fullscreen \
-  --window-position=0,0 \
-  --window-size=1920,1080 \
-  --force-device-scale-factor=1 \
-  --disable-pinch \
-  --overscroll-history-navigation=0 \
-  --check-for-update-interval=31536000 \
-  --disable-crash-reporter \
-  --app="$URL"
+while true; do
+  # Clear stale locks before each launch attempt
+  rm -f "$PROFILE_DIR/SingletonLock" \
+        "$PROFILE_DIR/SingletonCookie" \
+        "$PROFILE_DIR/Default/Last Session" \
+        "$PROFILE_DIR/Default/Last Tabs" 2>/dev/null
+
+  "$CHROMIUM" \
+    --ozone-platform="$PLATFORM" \
+    --no-sandbox \
+    --disable-gpu \
+    --disable-dev-shm-usage \
+    --renderer-process-limit=1 \
+    --disable-background-networking \
+    --disable-extensions \
+    --js-flags="--max-old-space-size=192" \
+    --kiosk \
+    --noerrdialogs \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --disable-component-update \
+    --disable-restore-session-state \
+    --no-first-run \
+    --start-fullscreen \
+    --window-position=0,0 \
+    --window-size=1920,1080 \
+    --force-device-scale-factor=1 \
+    --disable-pinch \
+    --overscroll-history-navigation=0 \
+    --check-for-update-interval=31536000 \
+    --disable-crash-reporter \
+    --app="$URL"
+
+  EXIT_CODE=$?
+  echo "Chromium exited with code $EXIT_CODE at $(date) — restarting in 5s..."
+  sleep 5
+done
