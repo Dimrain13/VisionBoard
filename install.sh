@@ -115,7 +115,28 @@ sudo systemctl enable it-dashboard
 sudo systemctl restart it-dashboard
 info "Service enabled and started (sudo systemctl status it-dashboard)"
 
-# ─── 7. Kiosk autostart ───────────────────────────────────────────
+# ─── 7. Desktop auto-login ────────────────────────────────────────
+step "Desktop auto-login (required for kiosk)"
+# Ensures the Pi boots straight to the desktop as the current user —
+# without this the kiosk never launches because LXDE autostart never runs.
+if command -v raspi-config &>/dev/null; then
+  # B4 = Desktop Autologin
+  sudo raspi-config nonint do_boot_behaviour B4
+  info "Auto-login to desktop enabled via raspi-config"
+else
+  # Fallback: write lightdm config directly
+  LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
+  if [ -f "$LIGHTDM_CONF" ]; then
+    sudo sed -i "s/#autologin-user=.*/autologin-user=${CURRENT_USER}/" "$LIGHTDM_CONF"
+    sudo sed -i "s/#autologin-user-timeout=.*/autologin-user-timeout=0/" "$LIGHTDM_CONF"
+    info "Auto-login configured in $LIGHTDM_CONF"
+  else
+    warn "Could not configure auto-login automatically."
+    warn "Open: sudo raspi-config → System Options → Boot / Auto Login → Desktop Autologin"
+  fi
+fi
+
+# ─── 8. Kiosk autostart ───────────────────────────────────────────
 step "Kiosk autostart (LXDE)"
 AUTOSTART_DIR="$HOME/.config/lxsession/LXDE-pi"
 AUTOSTART_FILE="$AUTOSTART_DIR/autostart"
@@ -151,11 +172,16 @@ echo -e "${BOLD}${GREEN}  Installation complete!${RESET}"
 echo -e "${BOLD}${GREEN}════════════════════════════════════════════${RESET}"
 echo ""
 echo -e "  ${BOLD}Next steps:${RESET}"
-echo "  1. Edit  backend/settings.yml   — add your real API credentials"
-echo "  2. Edit  backend/circuits.yml   — update WAN IP addresses"
-echo "  3. Run:  sudo systemctl status it-dashboard  to verify backend"
-echo "  4. Open: http://localhost:8001  in a browser to test"
-echo "  5. Reboot to launch the kiosk automatically"
+echo "  1. Edit  backend/circuits.yml   — update real WAN IP addresses"
+echo "  2. Run:  sudo systemctl status it-dashboard  to verify backend is running"
+echo "  3. Open: http://localhost:8001  in a browser to confirm the dashboard loads"
+echo "  4. Reboot — the kiosk will launch automatically on startup"
+echo ""
+echo -e "  ${BOLD}Boot sequence after reboot:${RESET}"
+echo "    1. systemd starts it-dashboard backend (port 8001)"
+echo "    2. Desktop auto-logs in as ${CURRENT_USER}"
+echo "    3. LXDE autostart runs kiosk.sh"
+echo "    4. kiosk.sh waits up to 60s for backend → opens Chromium fullscreen"
 echo ""
 echo -e "  ${BOLD}Useful commands:${RESET}"
 echo "    sudo systemctl restart it-dashboard   # restart backend"
