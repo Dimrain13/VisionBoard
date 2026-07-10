@@ -31,8 +31,13 @@ export DISPLAY=:0
 
 exec chromium \
   --no-sandbox \
+  --disable-gpu \
+  --disable-gpu-sandbox \
+  --disable-software-rasterizer \
   --disable-dev-shm-usage \
   --password-store=basic \
+  --renderer-process-limit=1 \
+  --disable-background-networking \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
