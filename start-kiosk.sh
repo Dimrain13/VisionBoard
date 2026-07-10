@@ -41,4 +41,6 @@ exec chromium \
   --disable-infobars \
   --no-first-run \
   --disable-restore-session-state \
+  --disable-session-crashed-bubble \
+  --disable-crash-reporter \
   http://localhost:8001
