@@ -31,6 +31,7 @@ exec chromium \
   --disable-dev-shm-usage \
   --disable-gpu \
   --renderer-process-limit=1 \
+  --password-store=basic \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
