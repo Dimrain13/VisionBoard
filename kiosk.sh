@@ -29,7 +29,8 @@ PROFILE_DIR="$HOME/.config/chromium"
   rm -f "$PROFILE_DIR/Default/RunningChromeOnOtherNotificationHandler"
 
 # Launch Chromium in kiosk mode
-chromium-browser \
+chromium \
+  --no-sandbox \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
