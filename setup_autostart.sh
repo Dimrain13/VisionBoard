@@ -85,6 +85,26 @@ if [ "$(id -u)" -eq 0 ]; then
   echo "Ownership set to $TARGET_USER"
 fi
 
+# ── ALSO create XDG autostart .desktop file ──────────────────────────────────
+# More reliable than lxsession autostart — works with LXDE, Openbox, XFCE, etc.
+XDG_AUTOSTART_DIR="$TARGET_HOME/.config/autostart"
+mkdir -p "$XDG_AUTOSTART_DIR"
+
+cat > "$XDG_AUTOSTART_DIR/it-dashboard-kiosk.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=IT Command Center Kiosk
+Exec=/bin/bash $REPO_DIR/kiosk.sh
+X-GNOME-Autostart-enabled=true
+Hidden=false
+NoDisplay=false
+DESKTOP
+
+if [ "$(id -u)" -eq 0 ]; then
+  chown "$TARGET_USER":"$TARGET_USER" "$XDG_AUTOSTART_DIR/it-dashboard-kiosk.desktop"
+fi
+echo "XDG autostart entry written: $XDG_AUTOSTART_DIR/it-dashboard-kiosk.desktop"
+
 # ── Show the result ───────────────────────────────────────────────────────────
 echo ""
 echo "  ╔══════════════════════════════════════╗"
