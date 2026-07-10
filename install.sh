@@ -176,9 +176,8 @@ chmod +x "$REPO_DIR/kiosk.sh" "$REPO_DIR/setup_autostart.sh" 2>/dev/null || true
 info "kiosk.sh, setup_autostart.sh marked executable"
 
 # ─── 9. Kiosk autostart ───────────────────────────────────────────
-step "Kiosk autostart (LXDE)"
-# Delegate to setup_autostart.sh — uses Python to write the file, avoiding
-# heredoc quoting issues and SSH session problems that plagued the old cat approach.
+step "Kiosk autostart"
+# Delegate to setup_autostart.sh — auto-detects labwc (Wayland) vs LXDE (X11)
 bash "$REPO_DIR/setup_autostart.sh"
 
 # ─── Done ─────────────────────────────────────────────────────────

@@ -11,14 +11,27 @@
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Determine the real target user ───────────────────────────────────────────
-# If run as root via sudo, write to the INVOKING user's home (not /root).
-if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+# Priority: explicit arg > SUDO_USER env > auto-detect first UID>=1000 user
+# Handles: sudo ./script, direct root login, and normal user login
+if [ -n "${1:-}" ]; then
+  # Explicit username passed as argument: ./setup_autostart.sh visionboard
+  TARGET_USER="$1"
+elif [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  # Invoked via sudo from another user
   TARGET_USER="$SUDO_USER"
-  TARGET_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+elif [ "$(id -u)" -eq 0 ]; then
+  # Direct root login — auto-detect the first non-root user with a /home dir
+  TARGET_USER=$(getent passwd | awk -F: '$3 >= 1000 && $6 ~ /^\/home/ { print $1; exit }')
+  if [ -z "$TARGET_USER" ]; then
+    echo "ERROR: Cannot auto-detect kiosk user. Pass it explicitly:"
+    echo "  ./setup_autostart.sh visionboard"
+    exit 1
+  fi
+  echo "Auto-detected kiosk user: $TARGET_USER"
 else
   TARGET_USER="$(whoami)"
-  TARGET_HOME="$HOME"
 fi
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 
 AUTOSTART_DIR="$TARGET_HOME/.config/lxsession/LXDE-pi"
 AUTOSTART_FILE="$AUTOSTART_DIR/autostart"
@@ -27,7 +40,38 @@ echo ""
 echo "  IT Command Center — Autostart Setup"
 echo "  Target user: $TARGET_USER"
 echo "  Home:        $TARGET_HOME"
-echo "  Autostart:   $AUTOSTART_FILE"
+echo ""
+
+# ── Detect session type ───────────────────────────────────────────────────────
+SESSION=$(grep -r "^user-session=\|^autologin-session=" /etc/lightdm/lightdm.conf 2>/dev/null \
+  | head -1 | cut -d= -f2 | tr -d '[:space:]')
+echo "  Detected session: ${SESSION:-unknown}"
+echo ""
+
+# ── labwc / Wayland (rpd-labwc — Pi OS Bookworm+) ────────────────────────────
+if echo "$SESSION" | grep -qi "labwc\|wayland"; then
+  LABWC_DIR="$TARGET_HOME/.config/labwc"
+  mkdir -p "$LABWC_DIR"
+  # labwc autostart is a shell script — append our line (idempotent)
+  LABWC_AUTOSTART="$LABWC_DIR/autostart"
+  # Remove old entry if present, then re-add
+  [ -f "$LABWC_AUTOSTART" ] && sed -i '/kiosk\.sh/d' "$LABWC_AUTOSTART" || true
+  echo "bash $REPO_DIR/kiosk.sh &" >> "$LABWC_AUTOSTART"
+  if [ "$(id -u)" -eq 0 ]; then
+    chown -R "$TARGET_USER":"$TARGET_USER" "$LABWC_DIR"
+  fi
+  echo "  labwc autostart written: $LABWC_AUTOSTART"
+  echo ""
+  cat "$LABWC_AUTOSTART"
+  echo ""
+  echo "  Done! Reboot to activate: sudo reboot"
+  exit 0
+fi
+
+# ── X11 / LXDE fallback ───────────────────────────────────────────────────────
+AUTOSTART_DIR="$TARGET_HOME/.config/lxsession/LXDE-pi"
+AUTOSTART_FILE="$AUTOSTART_DIR/autostart"
+echo "  Autostart: $AUTOSTART_FILE"
 echo ""
 
 # ── Create directory if missing ───────────────────────────────────────────────
