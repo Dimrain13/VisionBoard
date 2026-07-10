@@ -1546,6 +1546,10 @@ if _BUILD.is_dir():
     async def _manifest():
         return _FileResponse(str(_BUILD / "manifest.json"))
 
+    @app.get("/us-states-10m.json", include_in_schema=False)
+    async def _geo_json():
+        return _FileResponse(str(_BUILD / "us-states-10m.json"), media_type="application/json")
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa(full_path: str):
         """Catch-all: return index.html so React Router handles all paths."""
