@@ -1,8 +1,9 @@
 /**
  * MapEmbed — geographic NOC topology map for the Dashboard.
- * Full mesh: every site connected to every other site.
- *   Green flowing = both endpoints WAN up
- *   Red pulsing   = either endpoint WAN is DOWN
+ * Hub-and-spoke: Novi HQ → every other site (8 lines vs 36 full-mesh).
+ * Uses opacity animation (GPU-composited) instead of stroke-dashoffset (CPU paint).
+ *   Green pulse  = WAN up
+ *   Red pulse    = either endpoint WAN is DOWN
  */
 import React, { useState, useEffect } from "react";
 import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
@@ -28,12 +29,11 @@ const SITES = {
   "Azure":            { coords: [-87.63,  41.88 ], cloud: true},
 };
 
-// Pre-generate all site pairs for the full mesh
+// Hub-and-spoke: Novi → every other site (8 lines total — much lighter than 36-line full mesh)
 const SITE_KEYS = Object.keys(SITES);
-const MESH_PAIRS = [];
-for (let i = 0; i < SITE_KEYS.length; i++)
-  for (let j = i + 1; j < SITE_KEYS.length; j++)
-    MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j] });
+const SPOKES = SITE_KEYS
+  .filter(k => k !== "Novi")
+  .map((k, idx) => ({ src: "Novi", dst: k, idx }));
 
 function normalize(name) {
   return (name || "").replace(/\s+plant$/i, "").trim();
@@ -79,8 +79,8 @@ export default function MapEmbed({ sites = [] }) {
     >
       <defs>
         <style>{`
-          @keyframes pkt-up  { from{stroke-dashoffset:0} to{stroke-dashoffset:-24} }
-          @keyframes wan-down{ 0%,100%{opacity:.4} 50%{opacity:.85} }
+          @keyframes spoke-up   { 0%,100%{opacity:0.25} 50%{opacity:0.70} }
+          @keyframes spoke-down { 0%,100%{opacity:0.30} 50%{opacity:0.90} }
         `}</style>
       </defs>
 
@@ -99,41 +99,31 @@ export default function MapEmbed({ sites = [] }) {
         }
       </Geographies>
 
-      {/* Full mesh: every site ↔ every other site */}
-      {MESH_PAIRS.map(({ src, dst }, i) => {
+      {/* Hub-and-spoke: Novi → 8 sites (opacity animation = GPU composited, no CPU repaint) */}
+      {SPOKES.map(({ src, dst, idx }) => {
         const srcC  = SITES[src]?.coords;
         const dstC  = SITES[dst]?.coords;
         if (!srcC || !dstC) return null;
 
-        const down  = isWanDown(src) || isWanDown(dst);
+        const down  = isWanDown(normalize(dst));
         const color = down ? "#FF2A2A" : "#00FF66";
-
-        // Connections to/from Novi or Azure are slightly more prominent (backbone role)
-        const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-        const baseW  = backbone ? 0.65 : 0.35;
-        const flowW  = backbone ? 1.1  : 0.7;
-        const dash   = "4 20";   // total 24 — matches dashoffset delta for perfect loop
-        const opFlow = backbone ? 0.70  : 0.40;
-        const dur    = 2.4;      // uniform speed — no per-line variation
+        const w     = dst === "Azure" ? 1.0 : 0.75;
+        // Negative delay = start partway through cycle so lines don't all pulse together
+        const delay = `-${((idx * 0.45) % 3.0).toFixed(2)}s`;
 
         return (
-          <g key={`m-${src}-${dst}`}>
-            {/* Ghost base trace */}
-            <Line from={srcC} to={dstC}
-              stroke={color} strokeWidth={down ? baseW * 2.5 : baseW}
-              opacity={down ? 0.22 : 0.09} />
-            {/* Flowing packets (only when up) */}
-            {!down && (
-              <Line from={srcC} to={dstC}
-                stroke={color} strokeWidth={flowW} strokeDasharray={dash}
-                style={{ animation:`pkt-up ${dur}s linear infinite`, opacity:opFlow }} />
-            )}
-            {/* Pulsing red (when down) */}
-            {down && (
-              <Line from={srcC} to={dstC}
-                stroke={color} strokeWidth={baseW * 3}
-                style={{ animation:`wan-down 1.8s ease-in-out infinite`, opacity:.6 }} />
-            )}
+          <g key={`spoke-${dst}`}>
+            {/* Static ghost base — no animation, pure fill */}
+            <Line from={srcC} to={dstC} stroke={color} strokeWidth={w * 0.35} opacity={0.07} />
+            {/* Opacity-animated active line — GPU composited, zero CPU repaint */}
+            <Line from={srcC} to={dstC} stroke={color} strokeWidth={w}
+              style={{
+                animation: down
+                  ? `spoke-down 1.6s ease-in-out ${delay} infinite`
+                  : `spoke-up 3.0s ease-in-out ${delay} infinite`,
+                willChange: "opacity",
+              }}
+            />
           </g>
         );
       })}
@@ -157,19 +147,15 @@ export default function MapEmbed({ sites = [] }) {
           );
         }
 
-        const key    = normalize(name);
-        const down   = isWanDown(key);
-        const color  = down ? "#FF2A2A" : "#00FF66";
-        const nr     = hub ? 7 : 5;
-        const rr     = hub ? 11 : 8;
+        const key   = normalize(name);
+        const down  = isWanDown(key);
+        const color = down ? "#FF2A2A" : "#00FF66";
+        const nr    = hub ? 7 : 5;
+        const rr    = hub ? 11 : 8;
 
         return (
           <Marker key={name} coordinates={coords}>
             <g>
-              {down && (
-                <circle r={rr + 3} fill="none" stroke={color} strokeWidth={0.7}
-                  opacity={0.3} style={{ animation:"wan-down 2s ease-in-out infinite" }} />
-              )}
               <circle r={nr} fill={color} opacity={hub ? 1 : 0.88} />
               <circle r={rr} fill="none" stroke={color} strokeWidth={hub ? 0.8 : 0.5} opacity={0.22} />
               <text y={-(nr + 5)} textAnchor="middle" style={{

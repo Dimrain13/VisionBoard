@@ -29,8 +29,19 @@ PROFILE_DIR="$HOME/.config/chromium"
   rm -f "$PROFILE_DIR/Default/RunningChromeOnOtherNotificationHandler"
 
 # Launch Chromium in kiosk mode
+# --disable-gpu              : Pi 4 VideoCore GPU driver causes Chromium GPU process
+#                              to crash (exit_code=11 / SIGSEGV). Disabling forces stable
+#                              software rendering — smoother than crash/restart cycle.
+# --disable-dev-shm-usage    : Pi has small /dev/shm; prevents shared memory crashes.
+# --renderer-process-limit=1 : Single renderer process — saves ~100MB RAM on Pi.
+# --disable-background-networking: No background phone-home traffic competing for CPU.
 chromium \
   --no-sandbox \
+  --disable-gpu \
+  --disable-gpu-sandbox \
+  --disable-dev-shm-usage \
+  --renderer-process-limit=1 \
+  --disable-background-networking \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \

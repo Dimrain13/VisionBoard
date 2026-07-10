@@ -168,21 +168,15 @@ export default function NetworkMap() {
               }
             </Geographies>
 
-            {/* ── Keyframe for flowing packet animation ── */}
+            {/* ── Keyframe: opacity only = GPU-composited, no CPU repaint ── */}
             <defs>
               <style>{`
-                @keyframes packet-flow {
-                  from { stroke-dashoffset: 0; }
-                  to   { stroke-dashoffset: -24; }
-                }
-                @keyframes wan-down {
-                  0%,100% { opacity: .4; }
-                  50%     { opacity: .85; }
-                }
+                @keyframes mesh-up   { 0%,100%{opacity:0.55} 50%{opacity:0.85} }
+                @keyframes mesh-down { 0%,100%{opacity:0.30} 50%{opacity:0.90} }
               `}</style>
             </defs>
 
-            {/* Full mesh lines — green unless either endpoint WAN is DOWN */}
+            {/* Full mesh lines — backbone animates, non-backbone is static (Pi-friendly) */}
             {effectiveLinks.map((link, i) => {
               const src = SITES[link.src]?.coords;
               const dst = SITES[link.dst]?.coords;
@@ -191,26 +185,28 @@ export default function NetworkMap() {
               const color    = isDown ? "#FF2A2A" : "#00FF66";
               const backbone = link.src === "Novi" || link.dst === "Novi" ||
                                link.src === "Azure" || link.dst === "Azure";
-              const flowW    = backbone ? 1.1 : 0.7;
-              const dash     = "4 20";  // total 24 — matches dashoffset delta for perfect loop
-              const opFlow   = backbone ? 0.70 : 0.40;
-              const duration = 2.4;     // uniform — no per-line variation
+              const strokeW  = backbone ? (isDown ? 1.4 : 0.9) : (isDown ? 0.9 : 0.5);
+              const baseOp   = backbone ? (isDown ? 0.22 : 0.07) : (isDown ? 0.18 : 0.05);
+              // Staggered negative delay so backbone lines don't all pulse in sync
+              const delay    = `-${((i * 0.3) % 3.0).toFixed(1)}s`;
+
               return (
                 <g key={i}>
+                  {/* Ghost base — always static, no animation */}
                   <Line from={src} to={dst} stroke={color}
-                    strokeWidth={isDown ? flowW * 2 : flowW * 0.5}
-                    strokeOpacity={isDown ? 0.22 : 0.09} strokeLinecap="round" />
-                  {!isDown && (
-                    <Line from={src} to={dst} stroke={color}
-                      strokeWidth={flowW} strokeOpacity={opFlow}
-                      strokeDasharray={dash} strokeLinecap="round"
-                      style={{ animation:`packet-flow ${duration}s linear infinite` }} />
-                  )}
-                  {isDown && (
-                    <Line from={src} to={dst} stroke={color} strokeWidth={flowW * 2.5}
-                      strokeOpacity={0.6} strokeLinecap="round"
-                      style={{ animation:`wan-down 1.8s ease-in-out infinite` }} />
-                  )}
+                    strokeWidth={strokeW * 0.4} strokeOpacity={baseOp} strokeLinecap="round" />
+                  {/* Active line — backbone: opacity animation; non-backbone: static */}
+                  <Line from={src} to={dst} stroke={color}
+                    strokeWidth={strokeW} strokeLinecap="round"
+                    style={backbone ? {
+                      animation: isDown
+                        ? `mesh-down 1.6s ease-in-out ${delay} infinite`
+                        : `mesh-up 3.0s ease-in-out ${delay} infinite`,
+                      willChange: "opacity",
+                    } : {
+                      opacity: isDown ? 0.55 : 0.30,
+                    }}
+                  />
                 </g>
               );
             })}
