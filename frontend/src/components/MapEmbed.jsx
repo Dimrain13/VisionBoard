@@ -43,9 +43,9 @@ export default function MapEmbed() {
     >
       <defs>
         <style>{`
-          @keyframes traffic-pulse {
-            0%, 100% { opacity: 0.08; }
-            50%       { opacity: 0.75; }
+          @keyframes traffic-flow {
+            from { stroke-dashoffset: 0; }
+            to   { stroke-dashoffset: -24; }
           }
         `}</style>
       </defs>
@@ -72,21 +72,20 @@ export default function MapEmbed() {
         if (!srcC || !dstC) return null;
 
         const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-        const baseW = backbone ? 0.65 : 0.30;
-        const flowW = backbone ? 1.0  : 0.55;
-        const dur   = backbone ? 4    : 5 + (idx % 3);
-        const delay = `-${((idx * 0.4) % dur).toFixed(1)}s`;
+        const baseW  = backbone ? 0.65 : 0.30;
+        const flowW  = backbone ? 1.0  : 0.55;
+        const opFlow = backbone ? 0.65 : 0.35;
+        const dur    = backbone ? 2.2  : 3.0;
+        const delay  = `-${((idx * 0.18) % dur).toFixed(2)}s`;
 
         return (
           <g key={`m-${src}-${dst}`}>
             <Line from={srcC} to={dstC}
-              stroke="#00FF66" strokeWidth={baseW} opacity={0.06} />
+              stroke="#00FF66" strokeWidth={baseW} opacity={0.07} />
             <Line from={srcC} to={dstC}
               stroke="#00FF66" strokeWidth={flowW}
-              style={{
-                animation: `traffic-pulse ${dur}s ease-in-out ${delay} infinite`,
-                willChange: "opacity",
-              }}
+              strokeDasharray="4 20"
+              style={{ animation: `traffic-flow ${dur}s linear ${delay} infinite`, opacity: opFlow }}
             />
           </g>
         );
