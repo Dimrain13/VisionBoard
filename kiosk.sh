@@ -64,15 +64,11 @@ fi
 echo "Using: $CHROMIUM"
 
 # ── Detect display server and set platform flag ───────────────────────────────
-# Pi OS Bookworm+ uses rpd-labwc (Wayland). Fall back to X11/XWayland if needed.
-if [ -n "${WAYLAND_DISPLAY:-}" ]; then
-  PLATFORM="wayland"
-  echo "Display: Wayland ($WAYLAND_DISPLAY)"
-else
-  PLATFORM="x11"
-  export DISPLAY="${DISPLAY:-:0}"
-  echo "Display: X11 ($DISPLAY)"
-fi
+# Force XWayland (DISPLAY=:0) — native Wayland + --disable-gpu breaks rendering
+# on Pi 4 VideoCore. XWayland is the proven stable path.
+export DISPLAY="${DISPLAY:-:0}"
+PLATFORM="x11"
+echo "Display: XWayland ($DISPLAY)"
 
 # ── Launch Chromium — restart loop so crashes auto-recover ───────────────────
 echo "Launching $CHROMIUM ($PLATFORM) at $URL ..."
