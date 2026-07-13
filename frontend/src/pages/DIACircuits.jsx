@@ -26,7 +26,7 @@ export default function DIACircuits() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); const iv = setInterval(load, 30000); return () => clearInterval(iv); }, [load]);
+  useEffect(() => { load(); const iv = setInterval(load, 90000); return () => clearInterval(iv); }, [load]);
 
   const submit = async () => {
     if (editId) await axios.put(`${API}/circuits/${editId}`, form);

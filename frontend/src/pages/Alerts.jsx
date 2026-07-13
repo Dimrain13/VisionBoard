@@ -27,7 +27,7 @@ export default function Alerts() {
     finally { setLoading(false); }
   }, [filter]);
 
-  useEffect(() => { load(); const iv = setInterval(load, 30000); return () => clearInterval(iv); }, [load]);
+  useEffect(() => { load(); const iv = setInterval(load, 90000); return () => clearInterval(iv); }, [load]);
 
   const ack = async (id) => { await axios.put(`${API}/alerts/${id}/acknowledge`); load(); };
   const del = async (id) => { await axios.delete(`${API}/alerts/${id}`); load(); };

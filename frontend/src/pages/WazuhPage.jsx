@@ -57,7 +57,7 @@ export default function WazuhPage() {
     finally { setLoading(false); setRefreshing(false); }
   }, [minLevel, hoursBack, groupFilter]);
 
-  useEffect(() => { loadAll(); const iv = setInterval(loadAll, 30000); return () => clearInterval(iv); }, [loadAll]);
+  useEffect(() => { loadAll(); const iv = setInterval(loadAll, 90000); return () => clearInterval(iv); }, [loadAll]);
 
   const counts = {
     critical: alerts.filter(a => parseInt(a?.rule?.level ?? 0) >= 15).length,

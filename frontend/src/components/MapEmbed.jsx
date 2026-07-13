@@ -25,12 +25,10 @@ const SITES = {
   "Azure":            { coords: [-87.63,  41.88 ], cloud: true},
 };
 
-// Full mesh: every site ↔ every other site
-const SITE_KEYS = Object.keys(SITES);
-const MESH_PAIRS = [];
-for (let i = 0; i < SITE_KEYS.length; i++)
-  for (let j = i + 1; j < SITE_KEYS.length; j++)
-    MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j], idx: i * SITE_KEYS.length + j });
+// Hub-and-spoke from Novi HQ — 8 lines instead of 36, 78% fewer SVG elements
+const MESH_PAIRS = Object.keys(SITES)
+  .filter(k => k !== "Novi")
+  .map((dst, idx) => ({ src: "Novi", dst, idx }));
 
 export default function MapEmbed() {
   return (
@@ -65,18 +63,17 @@ export default function MapEmbed() {
         }
       </Geographies>
 
-      {/* Full mesh with flowing traffic animation — static green */}
+      {/* Hub-and-spoke lines from Novi — opacity pulse (GPU composited, zero CPU repaint) */}
       {MESH_PAIRS.map(({ src, dst, idx }) => {
         const srcC = SITES[src]?.coords;
         const dstC = SITES[dst]?.coords;
         if (!srcC || !dstC) return null;
 
-        const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-        const baseW    = backbone ? 0.65 : 0.30;
-        const flowW    = backbone ? 1.0  : 0.55;
-        const opFlow   = backbone ? 0.65 : 0.35;
-        const dur      = backbone ? 2.2  : 3.0;
-        const delay    = `-${((idx * 0.18) % dur).toFixed(2)}s`;
+        const isAzure  = dst === "Azure";
+        const baseW    = isAzure ? 0.65 : 0.5;
+        const flowW    = isAzure ? 1.0  : 0.7;
+        const dur      = 4 + (idx % 3);            // 4–6s — slow pulse = fewer repaints
+        const delay    = `-${(idx * 0.6).toFixed(1)}s`;
 
         return (
           <g key={`m-${src}-${dst}`}>
