@@ -1,15 +1,15 @@
 /**
- * MapEmbed — geographic NOC topology map with animated full mesh.
+ * MapEmbed — geographic NOC topology map.
  *
- * Rendering strategy (Pi Chromium software renderer):
- *  1. ComposableMap renders state fills + site markers only (no Line components).
- *  2. A plain <svg> overlay (absolutely positioned) renders all mesh <line> elements.
- *  3. SVG SMIL <animate> drives stroke-dashoffset — processed by Blink's SVG engine,
- *     not the CSS compositor, so it works under --disable-gpu / SwiftShader.
- *  4. JS requestAnimationFrame loop (properly wired to svgRef) sets stroke-dashoffset
- *     via setAttribute as a belt-and-suspenders fallback.
+ * Line animation strategy (Pi Chromium software renderer):
+ *   stroke-dasharray + CSS/SMIL animations all fail under --use-gl=swiftshader
+ *   because the Pi GPU driver doesn't support composited SVG paint animations.
+ *
+ *   Solution: <animateMotion> — moves actual <circle> elements along a path.
+ *   This uses element-level motion (not paint properties), works on ANY SVG
+ *   renderer including the most basic software rasterizer.
  */
-import React, { useRef, useEffect } from "react";
+import React from "react";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
 
 const GEO_URL           = "/us-states-10m.json";
@@ -51,26 +51,6 @@ const SITE_PX = Object.fromEntries(
 );
 
 export default function MapEmbed() {
-  const svgRef = useRef(null);
-
-  // JS rAF fallback — directly sets stroke-dashoffset attribute at 12 fps.
-  // Works independently of CSS compositor; fires even if SMIL is throttled.
-  useEffect(() => {
-    let frame, offset = 0, last = 0;
-    const STEP = 2, CYCLE = 24, INTERVAL = 1000 / 12;
-    const tick = (now) => {
-      frame = requestAnimationFrame(tick);
-      if (now - last < INTERVAL) return;
-      last = now;
-      offset = (offset + STEP) % CYCLE;
-      svgRef.current?.querySelectorAll("line.flow").forEach((el, i) => {
-        el.setAttribute("stroke-dashoffset", String((offset + i * 3) % CYCLE));
-      });
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
 
@@ -134,18 +114,16 @@ export default function MapEmbed() {
         })}
       </ComposableMap>
 
-      {/* ── Mesh line overlay — plain <svg>, no react-simple-maps involved ── */}
-      {/* Using SVG SMIL <animate> so animation is driven by Blink's SVG engine, */}
-      {/* not the CSS compositor (which is unavailable under --disable-gpu).      */}
+      {/* ── Mesh line overlay ──
+          Uses <animateMotion> on <circle> elements — moves actual DOM nodes,
+          no stroke-dasharray or composited paint animations required.
+          Works on Pi Chromium software renderer (--use-gl=swiftshader).        */}
       <svg
-        ref={svgRef}
         viewBox="0 0 1000 540"
         style={{
           position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100%",
-          height: "100%",
+          top: 0, left: 0,
+          width: "100%", height: "100%",
           pointerEvents: "none",
           overflow: "visible",
         }}
@@ -154,29 +132,45 @@ export default function MapEmbed() {
           const [x1, y1] = SITE_PX[src];
           const [x2, y2] = SITE_PX[dst];
           const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-          const dur = backbone ? 2.2 : 3.0;
-          const delayOffset = (idx * 0.18) % dur;
+          const dur      = backbone ? 2.2 : 3.4;
+          const dur2     = dur * 0.85;
+          // Stagger start times so not all packets move simultaneously
+          const t1 = ((idx * 0.31) % dur).toFixed(2);
+          const t2 = ((idx * 0.31 + dur / 2) % dur).toFixed(2);
+          const linePath = `M${x1},${y1} L${x2},${y2}`;
+
           return (
-            <line
-              key={`${src}-${dst}`}
-              className="flow"
-              x1={x1} y1={y1} x2={x2} y2={y2}
-              stroke="#00FF66"
-              strokeWidth={backbone ? 1.0 : 0.55}
-              strokeDasharray="4 20"
-              strokeDashoffset="0"
-              opacity={backbone ? 0.65 : 0.35}
-            >
-              {/* SMIL animation — primary driver on Pi software renderer */}
-              <animate
-                attributeName="stroke-dashoffset"
-                from="0"
-                to="-24"
-                dur={`${dur}s`}
-                begin={`-${delayOffset.toFixed(2)}s`}
-                repeatCount="indefinite"
+            <g key={`${src}-${dst}`}>
+              {/* Faint static guide line */}
+              <line
+                x1={x1} y1={y1} x2={x2} y2={y2}
+                stroke="#00FF66"
+                strokeWidth={backbone ? 0.7 : 0.35}
+                opacity={backbone ? 0.18 : 0.09}
               />
-            </line>
+
+              {/* Primary packet — travels source → destination */}
+              <circle r={backbone ? 2.2 : 1.6} fill="#00FF66" opacity={backbone ? 0.9 : 0.55}>
+                <animateMotion
+                  path={linePath}
+                  dur={`${dur}s`}
+                  begin={`-${t1}s`}
+                  repeatCount="indefinite"
+                />
+              </circle>
+
+              {/* Secondary packet on backbone links (offset by half duration) */}
+              {backbone && (
+                <circle r={1.6} fill="#00FF66" opacity={0.45}>
+                  <animateMotion
+                    path={linePath}
+                    dur={`${dur2}s`}
+                    begin={`-${t2}s`}
+                    repeatCount="indefinite"
+                  />
+                </circle>
+              )}
+            </g>
           );
         })}
       </svg>

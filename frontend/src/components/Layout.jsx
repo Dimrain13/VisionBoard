@@ -29,8 +29,8 @@ export default function Layout({ children }) {
   const [displayTick,   setDisplayTick]   = useState(0);  // reactive: drives UI
 
   // Refs so timer callbacks always see fresh values without recreating the interval
-  const currentPageRef  = useRef(location.pathname);
-  const tickRef         = useRef(0);           // imperative counter
+  const pageIdxRef      = useRef(-1);          // index into kioskPagesRef.current, -1 = not in list
+  const tickRef         = useRef(0);
   const kioskEnabledRef = useRef(false);
   const kioskIntervalRef= useRef(30);
   const kioskPagesRef   = useRef(ALL_KIOSK_PAGES);
@@ -77,12 +77,17 @@ export default function Layout({ children }) {
     return () => clearInterval(poll);
   }, []);
 
-  // Reset tick whenever the URL changes (e.g. manual nav or after auto-rotation)
+  // When URL changes: sync pageIdxRef to where we are in the rotation list
   useEffect(() => {
-    currentPageRef.current = location.pathname;
-    tickRef.current        = 0;
+    pageIdxRef.current = kioskPagesRef.current.indexOf(location.pathname);
+    tickRef.current    = 0;
     setDisplayTick(0);
   }, [location.pathname]);
+
+  // When pages list changes (settings reload): re-sync index to current URL
+  useEffect(() => {
+    pageIdxRef.current = kioskPagesRef.current.indexOf(location.pathname);
+  }, [kioskPages, location.pathname]);
 
   // Single persistent 1-second heartbeat — uses refs for all decision-making
   useEffect(() => {
@@ -93,13 +98,13 @@ export default function Layout({ children }) {
       setDisplayTick(tickRef.current);
 
       if (tickRef.current >= kioskIntervalRef.current) {
-        // Reset before navigating so the tick display snaps to 0 immediately
         tickRef.current = 0;
         setDisplayTick(0);
 
-        const idx  = kioskPagesRef.current.indexOf(currentPageRef.current);
-        const next = idx < 0 ? 0 : (idx + 1) % kioskPagesRef.current.length;
-        navigate(kioskPagesRef.current[next]);
+        const len     = kioskPagesRef.current.length;
+        const nextIdx = (pageIdxRef.current + 1 + len) % len;
+        pageIdxRef.current = nextIdx;
+        navigate(kioskPagesRef.current[nextIdx]);
       }
     }, 1000);
 
