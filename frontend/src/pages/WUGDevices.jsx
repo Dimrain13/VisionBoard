@@ -335,17 +335,23 @@ export default function WUGDevices() {
   const [loading,   setLoading]   = useState(false);
   const [lastFetch, setLastFetch] = useState(null);
   const [isMock,    setIsMock]    = useState(true);
+  const [wugError,  setWugError]  = useState(null);
 
   const fetchTopology = () => {
     setLoading(true);
-    axios.get(`${API}/wug/topology`, { timeout: 10000 })
+    axios.get(`${API}/wug/topology`, { timeout: 30000 })
       .then(r => {
         if (r.data?.locations?.length) {
           setData(r.data);
           setIsMock(false);
+          setWugError(null);
+        } else if (r.data?.source === "error") {
+          setWugError(r.data.message || "WUG API error");
+        } else if (r.data?.source === "pending") {
+          setWugError(null); // Not an error, just not configured
         }
       })
-      .catch(() => { /* keep mock data */ })
+      .catch(e => { setWugError(e.message); })
       .finally(() => { setLoading(false); setLastFetch(new Date()); });
   };
 
@@ -369,10 +375,16 @@ export default function WUGDevices() {
           <h1 style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700, color: "#E2E2E5", letterSpacing: "0.18em" }}>
             WUG NETWORK TOPOLOGY
           </h1>
-          {isMock && (
+          {isMock && !wugError && (
             <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#FFB014",
               background: "#1A1200", border: "1px solid #FFB01430", padding: "2px 7px", letterSpacing: "0.1em" }}>
               DEMO DATA — WUG API NOT CONNECTED
+            </span>
+          )}
+          {wugError && (
+            <span data-testid="wug-error-banner" style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#FF4444",
+              background: "#180808", border: "1px solid #FF2A2A33", padding: "2px 7px", letterSpacing: "0.1em" }}>
+              WUG ERROR: {wugError.slice(0, 80)}
             </span>
           )}
         </div>

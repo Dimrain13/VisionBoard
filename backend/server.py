@@ -740,6 +740,7 @@ async def lifespan(app: FastAPI):
     unifi_task   = asyncio.create_task(background_unifi_warmer())
     ping_task    = asyncio.create_task(background_circuit_pinger())
     vendor_task  = asyncio.create_task(background_vendor_warmer())
+    wug_task     = asyncio.create_task(_wug_background_poller())
 
     syslog_port = int(load_settings().get("unifi_syslog_port", 5140))
     transport = None
@@ -1108,31 +1109,254 @@ async def delete_ticket(ticket_id: str):
     raise HTTPException(status_code=404, detail="Ticket not found")
 
 
-# ─── WUG (WhatsUp Gold) Topology ──────────────────────────────────
-# Stub endpoint — returns placeholder topology data.
-# Tomorrow: replace body with real WUG REST API calls using
-# GET /api/v1/device/-1/devices  and  GET /api/v1/networkmap/{id}/data
+# ─── WUG (WhatsUp Gold) REST API ─────────────────────────────────────────────
+
+_wug_token_cache: dict = {}
+_wug_data_cache:  dict = {"topology": None, "alerts": [], "ts": 0.0}
+
+
+async def _wug_get_token(url: str, username: str, password: str) -> str:
+    """Fetch or return a cached WUG bearer token (refreshes 5 min before expiry)."""
+    now    = time.time()
+    cached = _wug_token_cache.get(url)
+    if cached and now < cached.get("expires_at", 0) - 300:
+        return cached["token"]
+    async with httpx.AsyncClient(verify=False, timeout=15) as client:
+        resp = await client.post(
+            f"{url.rstrip('/')}/api/v1/token",
+            data={"grant_type": "password", "username": username, "password": password},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    token = data["access_token"]
+    _wug_token_cache[url] = {"token": token, "expires_at": now + data.get("expires_in", 86399)}
+    return token
+
+
+async def _wug_get(url: str, path: str, token: str, params: dict | None = None) -> dict:
+    """Authenticated GET against the WUG REST API."""
+    async with httpx.AsyncClient(verify=False, timeout=20) as client:
+        resp = await client.get(
+            f"{url.rstrip('/')}/api/v1/{path.lstrip('/')}",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params or {},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _wug_all_devices(url: str, token: str, group_id: int = -1) -> list:
+    """Fetch every device from a group, handling WUG pagination."""
+    devices, page_id = [], None
+    while True:
+        params = {"pageSize": 200}
+        if page_id:
+            params["nextPageId"] = page_id
+        data    = await _wug_get(url, f"device-groups/{group_id}/devices", token, params)
+        batch   = data.get("data") or []
+        devices.extend(batch)
+        page_id = (data.get("paging") or {}).get("nextPageId")
+        if not page_id:
+            break
+    return devices
+
+
+async def _wug_child_groups(url: str, token: str, group_id: int = -1) -> list:
+    """Return immediate child groups of a group."""
+    data = await _wug_get(url, f"device-groups/{group_id}/childGroups", token)
+    return data.get("data") or []
+
+
+def _wug_map_type(role: str) -> str:
+    r = (role or "").lower()
+    if any(x in r for x in ["router", "firewall", "gateway", "udm", "usg", "edge"]):
+        return "gateway"
+    if any(x in r for x in ["access point", "ap ", "wireless", "wifi"]):
+        return "ap"
+    if any(x in r for x in ["core", "distribution"]):
+        return "switch_core"
+    if "switch" in r:
+        return "switch"
+    return "switch"
+
+
+def _wug_map_status(worst: str) -> str:
+    w = (worst or "").lower()
+    if w == "down":                          return "down"
+    if w in ("maintenance", "acknowledge"):  return "maintenance"
+    if w == "up":                            return "up"
+    return "unknown"
+
+
+def _wug_make_location(group: dict, raw_devs: list) -> dict:
+    """Convert a WUG group + its raw device list into a LocationCard-compatible dict."""
+    # Find first gateway to use as root parent
+    gw_id = None
+    for d in raw_devs:
+        if _wug_map_type(d.get("role", "")) == "gateway":
+            gw_id = str(d.get("id"))
+            break
+
+    devices = []
+    for d in raw_devs:
+        did    = str(d.get("id", ""))
+        dtype  = _wug_map_type(d.get("role", ""))
+        parent = None if (dtype == "gateway" or gw_id is None) else gw_id
+        devices.append({
+            "id":        did,
+            "name":      d.get("displayName") or d.get("hostName") or d.get("networkAddress") or did,
+            "type":      dtype,
+            "parent_id": parent,
+            "ip":        d.get("networkAddress") or d.get("hostName") or "",
+            "status":    _wug_map_status(d.get("worstState")),
+            "alert":     (d.get("worstState") or "").lower() == "down",
+        })
+    return {
+        "id":      str(group.get("id")),
+        "name":    group.get("name", f"Group {group.get('id')}"),
+        "devices": devices,
+    }
+
+
+async def _wug_fetch_topology(url: str, username: str, password: str) -> dict:
+    """Build full topology: device groups as locations, devices inside each."""
+    try:
+        token  = await _wug_get_token(url, username, password)
+        groups = await _wug_child_groups(url, token, -1)
+
+        locations = []
+        if groups:
+            # Build per-group device lists concurrently
+            tasks = [_wug_all_devices(url, token, int(g["id"])) for g in groups]
+            group_devs = await asyncio.gather(*tasks, return_exceptions=True)
+            for g, devs in zip(groups, group_devs):
+                if isinstance(devs, Exception) or not devs:
+                    continue
+                locations.append(_wug_make_location(g, devs))
+        else:
+            # No sub-groups — show all devices as one flat location
+            all_devs = await _wug_all_devices(url, token, -1)
+            if all_devs:
+                locations.append(_wug_make_location({"id": "all", "name": "All Devices"}, all_devs))
+
+        # Build alert list from any down device across all locations
+        alerts = [
+            {
+                "id":       d["id"],
+                "device":   d["name"],
+                "ip":       d["ip"],
+                "location": loc["name"],
+                "status":   d["status"],
+            }
+            for loc in locations
+            for d in loc["devices"]
+            if d["alert"]
+        ]
+        return {"locations": locations, "alerts": alerts, "source": "live"}
+
+    except Exception as exc:
+        logger.error("WUG topology fetch failed: %s", exc)
+        return {"locations": [], "alerts": [], "source": "error", "message": str(exc)}
+
+
+async def _wug_background_poller():
+    """Refresh WUG topology every wug_poll_interval seconds and inject alerts for down devices."""
+    await asyncio.sleep(20)
+    known_down: set = set()   # track already-alerted device IDs so we don't duplicate
+    while True:
+        try:
+            s    = load_settings()
+            url  = s.get("wug_url", "").strip()
+            user = s.get("wug_username", "").strip()
+            pwd  = s.get("wug_password", "").strip()
+            if url and user and pwd:
+                result = await _wug_fetch_topology(url, user, pwd)
+                _wug_data_cache["topology"] = result
+                _wug_data_cache["alerts"]   = result.get("alerts", [])
+                _wug_data_cache["ts"]        = time.time()
+
+                # Inject new down-device alerts into the shared _alerts_store
+                current_down = {a["id"] for a in result.get("alerts", [])}
+                for alert in result.get("alerts", []):
+                    dev_id = alert["id"]
+                    if dev_id not in known_down:
+                        from datetime import datetime, timezone
+                        doc = {
+                            "id":           f"wug-{dev_id}",
+                            "title":        f"WUG: {alert['device']} is DOWN",
+                            "message":      f"Device {alert['device']} ({alert['ip']}) at {alert['location']} reported DOWN by WhatsUp Gold",
+                            "severity":     "critical",
+                            "site":         alert.get("location", ""),
+                            "device":       alert.get("device", ""),
+                            "acknowledged": False,
+                            "source":       "wug",
+                            "ts":           datetime.now(timezone.utc).isoformat(),
+                        }
+                        # Avoid duplicates if alert already exists in store
+                        if not any(a.get("id") == doc["id"] for a in _alerts_store):
+                            _alerts_store.append(doc)
+                # Remove auto-resolved WUG alerts from store
+                for a in list(_alerts_store):
+                    if a.get("source") == "wug" and a["id"].replace("wug-", "") not in current_down:
+                        _alerts_store.remove(a)
+                known_down = current_down
+        except Exception as exc:
+            logger.warning("WUG background poll error: %s", exc)
+        interval = load_settings().get("wug_poll_interval", 60)
+        await asyncio.sleep(max(30, interval))
+
 
 @api_router.get("/wug/topology")
 async def wug_topology():
     """
-    Returns network topology per location.
-    Currently returns a placeholder structure; WUG API integration pending.
-    Schema matches what the frontend LocationCard expects:
-      { locations: [ { id, name, devices: [ { id, name, type, parent_id, ip, status, alert } ] } ] }
+    Returns network topology grouped by WUG device-group (= location).
+    Schema: { locations: [ { id, name, devices: [...] } ], source, alerts }
     """
-    settings = load_settings()
-    wug_url  = settings.get("wug_url", "")
-    wug_user = settings.get("wug_username", "")
-    wug_pass = settings.get("wug_password", "")
+    s    = load_settings()
+    url  = s.get("wug_url", "").strip()
+    user = s.get("wug_username", "").strip()
+    pwd  = s.get("wug_password", "").strip()
 
-    # ── When WUG credentials are available, call the real API here ──
-    # if wug_url and wug_user and wug_pass:
-    #     token = await _wug_get_token(wug_url, wug_user, wug_pass)
-    #     return await _wug_fetch_topology(wug_url, token)
+    if not (url and user and pwd):
+        return {"locations": [], "alerts": [], "source": "pending",
+                "message": "WUG credentials not configured — set wug_url, wug_username, wug_password in Settings"}
 
-    # ── Placeholder — frontend falls back to its own mock if this returns empty ──
-    return {"locations": [], "source": "pending", "message": "WUG API not yet configured"}
+    # Serve from background cache if fresh (< 2× poll interval)
+    cached = _wug_data_cache.get("topology")
+    if cached and time.time() - _wug_data_cache["ts"] < s.get("wug_poll_interval", 60) * 2:
+        return cached
+
+    # Otherwise fetch live (first hit, or cache stale)
+    result = await _wug_fetch_topology(url, user, pwd)
+    _wug_data_cache["topology"] = result
+    _wug_data_cache["alerts"]   = result.get("alerts", [])
+    _wug_data_cache["ts"]        = time.time()
+    return result
+
+
+@api_router.get("/wug/alerts")
+async def wug_alerts():
+    """Returns only the down-device alerts from the last WUG topology poll."""
+    s    = load_settings()
+    url  = s.get("wug_url", "").strip()
+    user = s.get("wug_username", "").strip()
+    pwd  = s.get("wug_password", "").strip()
+
+    if not (url and user and pwd):
+        return {"alerts": [], "source": "pending"}
+
+    # Use background cache if available
+    if _wug_data_cache["ts"] > 0:
+        return {"alerts": _wug_data_cache["alerts"], "source": "live",
+                "ts": _wug_data_cache["ts"]}
+
+    # Cold start — fetch now
+    result = await _wug_fetch_topology(url, user, pwd)
+    _wug_data_cache["topology"] = result
+    _wug_data_cache["alerts"]   = result.get("alerts", [])
+    _wug_data_cache["ts"]        = time.time()
+    return {"alerts": _wug_data_cache["alerts"], "source": "live"}
 
 
 # ─── Vendor Status ─────────────────────────────────────────────────

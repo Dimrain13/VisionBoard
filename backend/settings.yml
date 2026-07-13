@@ -28,9 +28,9 @@ wug_sender_filter: "whatsupgold"
 
 # ── WUG (WhatsUp Gold) REST API ──────────────────────────
 # Fill in once API access is available
-wug_url: ""
-wug_username: ""
-wug_password: ""
+wug_url: "https://wug-mmpa.mimilk.com"
+wug_username: "noc-readonly"
+wug_password: "PYJ28IT5zQeK!"
 wug_poll_interval: 60
 
 # ── Vivantio ITSM ────────────────────────────────────────
