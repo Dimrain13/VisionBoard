@@ -4,7 +4,7 @@
  * All mesh lines are permanently green (traffic-flow animation).
  * Circuit status is shown separately in the DIA Circuit Status Engine.
  */
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
 
 const GEO_URL = "/us-states-10m.json";
@@ -33,7 +33,36 @@ for (let i = 0; i < SITE_KEYS.length; i++)
     MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j], idx: i * SITE_KEYS.length + j });
 
 export default function MapEmbed() {
+  const wrapRef = useRef(null);
+
+  // JS-driven dashoffset — CSS animations don't run in --disable-gpu software mode on Pi
+  // Direct DOM updates at 12 fps bypass React reconciliation entirely
+  useEffect(() => {
+    let frame;
+    let offset = 0;
+    let last = 0;
+    const INTERVAL = 1000 / 12; // 12 fps — smooth enough, light on CPU
+    const STEP = 2;              // pixels per frame (controls speed)
+    const CYCLE = 24;            // matches strokeDasharray repeat (4 + 20)
+
+    const tick = (now) => {
+      if (now - last >= INTERVAL) {
+        offset = (offset + STEP) % CYCLE;
+        const el = wrapRef.current;
+        if (el) {
+          el.querySelectorAll(".rsm-flow").forEach((path, i) => {
+            path.setAttribute("stroke-dashoffset", -(offset + i * 3) % CYCLE);
+          });
+        }
+        last = now;
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
   return (
+    <div ref={wrapRef} style={{ width: "100%", height: "100%" }}>
     <ComposableMap
       projection="geoMercator"
       projectionConfig={PROJECTION_CONFIG}
@@ -41,14 +70,7 @@ export default function MapEmbed() {
       height={540}
       style={{ width: "100%", height: "100%", background: "transparent" }}
     >
-      <defs>
-        <style>{`
-          @keyframes traffic-flow {
-            from { stroke-dashoffset: 0; }
-            to   { stroke-dashoffset: -24; }
-          }
-        `}</style>
-      </defs>
+      <defs><style>{``}</style></defs>
 
       <Geographies geography={GEO_URL}>
         {({ geographies }) =>
@@ -85,7 +107,9 @@ export default function MapEmbed() {
             <Line from={srcC} to={dstC}
               stroke="#00FF66" strokeWidth={flowW}
               strokeDasharray="4 20"
-              style={{ animation: `traffic-flow ${dur}s linear ${delay} infinite`, opacity: opFlow }}
+              strokeDashoffset={0}
+              className="rsm-flow"
+              opacity={opFlow}
             />
           </g>
         );
@@ -130,5 +154,6 @@ export default function MapEmbed() {
         );
       })}
     </ComposableMap>
+    </div>
   );
 }
