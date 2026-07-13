@@ -5,8 +5,18 @@ import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-// Pages that cycle in kiosk mode (order matters)
-const KIOSK_PAGES = ["/dashboard", "/wazuh", "/circuits", "/alerts"];
+// Pages that cycle in kiosk mode — matches tab order, Settings excluded
+const KIOSK_PAGES = [
+  "/dashboard",
+  "/map",
+  "/alerts",
+  "/status",
+  "/circuits",
+  "/unifi-devices",
+  "/tickets",
+  "/wug-topology",
+  "/wazuh",
+];
 
 export default function Layout({ children }) {
   const navigate   = useNavigate();
