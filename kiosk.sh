@@ -64,17 +64,15 @@ fi
 echo "Using: $CHROMIUM"
 
 # ── Detect display server and set platform flag ───────────────────────────────
-# Force XWayland (DISPLAY=:0) — native Wayland + --disable-gpu breaks rendering
-# on Pi 4 VideoCore. XWayland is the proven stable path.
-export DISPLAY="${DISPLAY:-:0}"
-PLATFORM="x11"
-echo "Display: XWayland ($DISPLAY)"
+# Let labwc/compositor set the platform automatically.
+# Do NOT force XWayland — it may not be running under pure labwc Wayland.
+# --disable-gpu is the proven stable flag for Pi 4 VideoCore (avoids EGL crashes).
+echo "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-unset}  DISPLAY=${DISPLAY:-unset}"
 
 # ── Launch Chromium — restart loop so crashes auto-recover ───────────────────
-echo "Launching $CHROMIUM ($PLATFORM) at $URL ..."
+echo "Launching $CHROMIUM at $URL ..."
 while true; do
   # Clear stale locks and browser cache before each launch
-  # (ensures a fresh yarn build is always picked up without manual intervention)
   rm -f  "$PROFILE_DIR/SingletonLock" \
          "$PROFILE_DIR/SingletonCookie" \
          "$PROFILE_DIR/Default/Last Session" \
@@ -84,10 +82,10 @@ while true; do
          "$PROFILE_DIR/Default/GPUCache" 2>/dev/null
 
   "$CHROMIUM" \
-    --ozone-platform="$PLATFORM" \
     --no-sandbox \
-    --use-gl=swiftshader \
+    --disable-gpu \
     --disable-dev-shm-usage \
+    --password-store=basic \
     --renderer-process-limit=1 \
     --disable-background-networking \
     --disable-extensions \
