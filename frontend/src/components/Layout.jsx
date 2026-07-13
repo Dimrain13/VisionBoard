@@ -39,6 +39,24 @@ export default function Layout({ children }) {
   kioskIntervalRef.current = kioskInterval;
   isPausedRef.current      = isPaused;
 
+  // Auto-hide cursor for kiosk — hides after 3s of inactivity, shows briefly on move
+  useEffect(() => {
+    let hideTimer = null;
+    const hideCursor = () => document.body.classList.add("cursor-hidden");
+    const showCursor = () => {
+      document.body.classList.remove("cursor-hidden");
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(hideCursor, 3000);
+    };
+    hideCursor(); // hide immediately on load
+    window.addEventListener("mousemove", showCursor);
+    return () => {
+      window.removeEventListener("mousemove", showCursor);
+      clearTimeout(hideTimer);
+      document.body.classList.remove("cursor-hidden");
+    };
+  }, []);
+
   // Load kiosk settings and re-poll every 60s so YAML changes take effect without restart
   useEffect(() => {
     const fetchSettings = () => {

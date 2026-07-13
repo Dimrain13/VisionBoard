@@ -18,6 +18,12 @@ body {
   overflow: hidden;
 }
 
+/* Kiosk: hide cursor — reappears briefly on mouse move via JS in Layout.jsx */
+body.cursor-hidden,
+body.cursor-hidden * {
+  cursor: none !important;
+}
+
 ::-webkit-scrollbar { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: #030305; }
 ::-webkit-scrollbar-thumb { background: #1C1C24; }
