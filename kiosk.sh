@@ -73,11 +73,15 @@ echo "Display: XWayland ($DISPLAY)"
 # ── Launch Chromium — restart loop so crashes auto-recover ───────────────────
 echo "Launching $CHROMIUM ($PLATFORM) at $URL ..."
 while true; do
-  # Clear stale locks before each launch attempt
-  rm -f "$PROFILE_DIR/SingletonLock" \
-        "$PROFILE_DIR/SingletonCookie" \
-        "$PROFILE_DIR/Default/Last Session" \
-        "$PROFILE_DIR/Default/Last Tabs" 2>/dev/null
+  # Clear stale locks and browser cache before each launch
+  # (ensures a fresh yarn build is always picked up without manual intervention)
+  rm -f  "$PROFILE_DIR/SingletonLock" \
+         "$PROFILE_DIR/SingletonCookie" \
+         "$PROFILE_DIR/Default/Last Session" \
+         "$PROFILE_DIR/Default/Last Tabs" 2>/dev/null
+  rm -rf "$PROFILE_DIR/Default/Cache" \
+         "$PROFILE_DIR/Default/Code Cache" \
+         "$PROFILE_DIR/Default/GPUCache" 2>/dev/null
 
   "$CHROMIUM" \
     --ozone-platform="$PLATFORM" \
