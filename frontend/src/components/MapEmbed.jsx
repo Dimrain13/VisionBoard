@@ -1,8 +1,8 @@
 /**
  * MapEmbed — geographic NOC topology map with animated full mesh.
  */
-import React from "react";
-import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
+import React, { useRef, useEffect } from "react";
+import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
 
 const GEO_URL           = "/us-states-10m.json";
 const PROJECTION_CONFIG = { scale: 4500, center: [-84.8, 42.4] };
@@ -28,7 +28,39 @@ for (let i = 0; i < SITE_KEYS.length; i++)
   for (let j = i + 1; j < SITE_KEYS.length; j++)
     MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j], idx: i * SITE_KEYS.length + j });
 
+// Mercator projection — same params as ComposableMap (scale 4500, center [-84.8, 42.4])
+// Used to place mesh lines in plain SVG coordinate space (viewBox 1000x540)
+const W = 1000, H = 540;
+function mercY(lat) { return Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)); }
+const _CY = mercY(42.4);
+function px(lng, lat) {
+  return [
+    4500 * ((lng + 84.8) * Math.PI / 180) + W / 2,
+    -4500 * (mercY(lat) - _CY) + H / 2,
+  ];
+}
+const SITE_PX = Object.fromEntries(Object.entries(SITES).map(([k, v]) => [k, px(...v.coords)]));
+
 export default function MapEmbed() {
+  const svgRef = useRef(null);
+
+  // JS-driven stroke-dashoffset — updates SVG attributes directly at 12 fps
+  // bypassing Chromium's CSS animation compositor which skips it on Pi
+  useEffect(() => {
+    let frame, offset = 0, last = 0;
+    const STEP = 2, CYCLE = 24, INTERVAL = 1000 / 12;
+    const tick = (now) => {
+      frame = requestAnimationFrame(tick);
+      if (now - last < INTERVAL) return;
+      last = now;
+      offset = (offset + STEP) % CYCLE;
+      svgRef.current?.querySelectorAll("line.flow").forEach((el, i) => {
+        el.setAttribute("stroke-dashoffset", (offset + i * 3) % CYCLE);
+      });
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
   return (
     <ComposableMap
       projection="geoMercator"
