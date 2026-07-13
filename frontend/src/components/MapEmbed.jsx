@@ -1,15 +1,11 @@
 /**
  * MapEmbed — geographic NOC topology map.
  *
- * Line animation strategy (Pi Chromium software renderer):
- *   stroke-dasharray + CSS/SMIL animations all fail under --use-gl=swiftshader
- *   because the Pi GPU driver doesn't support composited SVG paint animations.
- *
- *   Solution: <animateMotion> — moves actual <circle> elements along a path.
- *   This uses element-level motion (not paint properties), works on ANY SVG
- *   renderer including the most basic software rasterizer.
+ * Animation: pure requestAnimationFrame moving circle cx/cy attributes.
+ * No SMIL, no CSS animation, no stroke-dasharray.
+ * Works under --disable-gpu (Skia CPU rasterizer + rAF timer fallback).
  */
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
 
 const GEO_URL           = "/us-states-10m.json";
@@ -51,6 +47,33 @@ const SITE_PX = Object.fromEntries(
 );
 
 export default function MapEmbed() {
+  const svgRef = useRef(null);
+
+  useEffect(() => {
+    let frame;
+    const origin = performance.now();
+
+    const tick = (now) => {
+      frame = requestAnimationFrame(tick);
+      const elapsed = now - origin;
+
+      svgRef.current?.querySelectorAll("circle.pkt").forEach(el => {
+        const dur = parseFloat(el.dataset.dur);   // ms
+        const off = parseFloat(el.dataset.off);   // ms offset
+        const x1  = parseFloat(el.dataset.x1);
+        const y1  = parseFloat(el.dataset.y1);
+        const x2  = parseFloat(el.dataset.x2);
+        const y2  = parseFloat(el.dataset.y2);
+        const t   = ((elapsed + off) % dur) / dur;  // 0..1
+        el.setAttribute("cx", String(x1 + (x2 - x1) * t));
+        el.setAttribute("cy", String(y1 + (y2 - y1) * t));
+      });
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
 
@@ -114,61 +137,57 @@ export default function MapEmbed() {
         })}
       </ComposableMap>
 
-      {/* ── Mesh line overlay ──
-          Uses <animateMotion> on <circle> elements — moves actual DOM nodes,
-          no stroke-dasharray or composited paint animations required.
-          Works on Pi Chromium software renderer (--use-gl=swiftshader).        */}
+      {/* ── Mesh overlay: rAF moves circle cx/cy directly, no CSS/SMIL needed ── */}
       <svg
+        ref={svgRef}
         viewBox="0 0 1000 540"
         style={{
-          position: "absolute",
-          top: 0, left: 0,
+          position: "absolute", top: 0, left: 0,
           width: "100%", height: "100%",
-          pointerEvents: "none",
-          overflow: "visible",
+          pointerEvents: "none", overflow: "visible",
         }}
       >
         {MESH_PAIRS.map(({ src, dst, idx }) => {
           const [x1, y1] = SITE_PX[src];
           const [x2, y2] = SITE_PX[dst];
           const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-          const dur      = backbone ? 2.2 : 3.4;
-          const dur2     = dur * 0.85;
-          // Stagger start times so not all packets move simultaneously
-          const t1 = ((idx * 0.31) % dur).toFixed(2);
-          const t2 = ((idx * 0.31 + dur / 2) % dur).toFixed(2);
-          const linePath = `M${x1},${y1} L${x2},${y2}`;
+          const durMs  = (backbone ? 2200 : 3400);
+          const dur2Ms = Math.round(durMs * 0.82);
+          const off1   = Math.round((idx * 310) % durMs);
+          const off2   = Math.round((idx * 310 + durMs / 2) % dur2Ms);
 
           return (
             <g key={`${src}-${dst}`}>
-              {/* Faint static guide line */}
+              {/* Static guide line */}
               <line
                 x1={x1} y1={y1} x2={x2} y2={y2}
                 stroke="#00FF66"
-                strokeWidth={backbone ? 0.7 : 0.35}
-                opacity={backbone ? 0.18 : 0.09}
+                strokeWidth={backbone ? 0.8 : 0.4}
+                opacity={backbone ? 0.25 : 0.12}
               />
 
-              {/* Primary packet — travels source → destination */}
-              <circle r={backbone ? 2.2 : 1.6} fill="#00FF66" opacity={backbone ? 0.9 : 0.55}>
-                <animateMotion
-                  path={linePath}
-                  dur={`${dur}s`}
-                  begin={`-${t1}s`}
-                  repeatCount="indefinite"
-                />
-              </circle>
+              {/* Primary packet — rAF moves this via cx/cy */}
+              <circle
+                className="pkt"
+                data-x1={x1} data-y1={y1} data-x2={x2} data-y2={y2}
+                data-dur={durMs} data-off={off1}
+                cx={x1} cy={y1}
+                r={backbone ? 2.5 : 1.8}
+                fill="#00FF66"
+                opacity={backbone ? 0.95 : 0.6}
+              />
 
-              {/* Secondary packet on backbone links (offset by half duration) */}
+              {/* Second packet on backbone links */}
               {backbone && (
-                <circle r={1.6} fill="#00FF66" opacity={0.45}>
-                  <animateMotion
-                    path={linePath}
-                    dur={`${dur2}s`}
-                    begin={`-${t2}s`}
-                    repeatCount="indefinite"
-                  />
-                </circle>
+                <circle
+                  className="pkt"
+                  data-x1={x1} data-y1={y1} data-x2={x2} data-y2={y2}
+                  data-dur={dur2Ms} data-off={off2}
+                  cx={x1} cy={y1}
+                  r={1.8}
+                  fill="#00FF66"
+                  opacity={0.5}
+                />
               )}
             </g>
           );
