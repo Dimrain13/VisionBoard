@@ -5,8 +5,8 @@ import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-// Pages that cycle in kiosk mode — matches tab order, Settings excluded
-const KIOSK_PAGES = [
+// Default page order — overridden by kiosk_pages from settings API
+const ALL_KIOSK_PAGES = [
   "/dashboard",
   "/map",
   "/alerts",
@@ -24,6 +24,7 @@ export default function Layout({ children }) {
 
   const [kioskEnabled,  setKioskEnabled]  = useState(false);
   const [kioskInterval, setKioskInterval] = useState(30);
+  const [kioskPages,    setKioskPages]    = useState(ALL_KIOSK_PAGES);
   const [isPaused,      setIsPaused]      = useState(false);
   const [displayTick,   setDisplayTick]   = useState(0);  // reactive: drives UI
 
@@ -32,11 +33,13 @@ export default function Layout({ children }) {
   const tickRef         = useRef(0);           // imperative counter
   const kioskEnabledRef = useRef(false);
   const kioskIntervalRef= useRef(30);
+  const kioskPagesRef   = useRef(ALL_KIOSK_PAGES);
   const isPausedRef     = useRef(false);
 
   // Sync refs with state
   kioskEnabledRef.current  = kioskEnabled;
   kioskIntervalRef.current = kioskInterval;
+  kioskPagesRef.current    = kioskPages.length > 0 ? kioskPages : ALL_KIOSK_PAGES;
   isPausedRef.current      = isPaused;
 
   // Auto-hide cursor for kiosk — hides after 3s of inactivity, shows briefly on move
@@ -63,6 +66,10 @@ export default function Layout({ children }) {
       axios.get(`${API}/settings`).then(res => {
         setKioskEnabled(res.data.kiosk_enabled  ?? false);
         setKioskInterval(res.data.kiosk_interval ?? 30);
+        const pages = res.data.kiosk_pages;
+        if (Array.isArray(pages) && pages.length > 0) {
+          setKioskPages(pages);
+        }
       }).catch(() => {});
     };
     fetchSettings();
@@ -90,9 +97,9 @@ export default function Layout({ children }) {
         tickRef.current = 0;
         setDisplayTick(0);
 
-        const idx  = KIOSK_PAGES.indexOf(currentPageRef.current);
-        const safe = idx < 0 ? 0 : idx;
-        navigate(KIOSK_PAGES[(safe + 1) % KIOSK_PAGES.length]);
+        const idx  = kioskPagesRef.current.indexOf(currentPageRef.current);
+        const next = idx < 0 ? 0 : (idx + 1) % kioskPagesRef.current.length;
+        navigate(kioskPagesRef.current[next]);
       }
     }, 1000);
 

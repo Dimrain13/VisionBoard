@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 import os, logging, asyncio, httpx, imaplib, email as emaillib, re, uuid, base64, time
@@ -23,6 +23,7 @@ _circuits_lock  = threading.Lock()
 
 DEFAULT_SETTINGS: dict = {
     "refresh_interval": 30, "kiosk_enabled": False, "kiosk_interval": 30,
+    "kiosk_pages": ["/dashboard", "/map", "/alerts", "/status", "/circuits", "/unifi-devices", "/tickets", "/wug-topology", "/wazuh"],
     "email_enabled": False, "email_host": "", "email_port": 993,
     "email_username": "", "email_password": "", "email_folder": "INBOX",
     "wug_sender_filter": "whatsupgold",
@@ -143,6 +144,7 @@ class SettingsUpdate(BaseModel):
     wazuh_enabled: Optional[bool] = None
     kiosk_enabled: Optional[bool] = None
     kiosk_interval: Optional[int] = None
+    kiosk_pages: Optional[List[str]] = None
     downdetector_client_id: Optional[str] = None
     downdetector_client_secret: Optional[str] = None
     unifi_controller1_url: Optional[str] = None

@@ -6,6 +6,16 @@
 refresh_interval: 30
 kiosk_enabled: false
 kiosk_interval: 30
+kiosk_pages:
+  - /dashboard
+  - /map
+  - /alerts
+  - /status
+  - /circuits
+  - /unifi-devices
+  - /tickets
+  - /wug-topology
+  - /wazuh
 
 # ── Email / WUG Polling ──────────────────────────────────
 email_enabled: false

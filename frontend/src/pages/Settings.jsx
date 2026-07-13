@@ -4,6 +4,18 @@ import { Save, Eye, EyeOff } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const ALL_KIOSK_PAGES = [
+  { path: "/dashboard",     label: "DASHBOARD"     },
+  { path: "/map",           label: "NETWORK MAP"   },
+  { path: "/alerts",        label: "ALERTS"        },
+  { path: "/status",        label: "VENDOR STATUS" },
+  { path: "/circuits",      label: "DIA CIRCUITS"  },
+  { path: "/unifi-devices", label: "UNIFI DEVICES" },
+  { path: "/tickets",       label: "TICKETS"       },
+  { path: "/wug-topology",  label: "WUG"           },
+  { path: "/wazuh",         label: "WAZUH"         },
+];
+
 function Section({ title, children }) {
   return (
     <div className="card">
@@ -79,10 +91,6 @@ export default function Settings() {
         {/* Kiosk Rotation */}
         <Section title="KIOSK AUTO-ROTATION">
           <div style={{ marginBottom: 16 }}>
-            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#3A3A48", lineHeight: 1.9, marginBottom: 12 }}>
-              When enabled, the display automatically cycles through:&nbsp;
-              <span style={{ color: "#00E5FF" }}>DASHBOARD → WAZUH → CIRCUITS → ALERTS</span>
-            </p>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div
                 data-testid="settings-kiosk_enabled-toggle"
@@ -115,6 +123,49 @@ export default function Settings() {
               </span>
             </div>
           </div>
+
+          {/* Page selection */}
+          <div style={{ marginBottom: 16 }}>
+            <div className="section-label" style={{ marginBottom: 8 }}>PAGES TO ROTATE THROUGH</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+              {ALL_KIOSK_PAGES.map(({ path, label }) => {
+                const pages = Array.isArray(settings.kiosk_pages) ? settings.kiosk_pages : ALL_KIOSK_PAGES.map(p => p.path);
+                const checked = pages.includes(path);
+                return (
+                  <div
+                    key={path}
+                    data-testid={`kiosk-page-${path.replace("/", "")}`}
+                    onClick={() => {
+                      const current = Array.isArray(settings.kiosk_pages) ? settings.kiosk_pages : ALL_KIOSK_PAGES.map(p => p.path);
+                      const next = checked ? current.filter(p => p !== path) : [...current, path];
+                      set("kiosk_pages", next);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 8px",
+                      background: checked ? "rgba(0,255,102,0.06)" : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${checked ? "rgba(0,255,102,0.25)" : "#1C1C24"}`,
+                      cursor: "pointer",
+                      transition: "all 120ms ease",
+                    }}
+                  >
+                    <div style={{
+                      width: 10, height: 10, flexShrink: 0,
+                      background: checked ? "#00FF66" : "transparent",
+                      border: `1px solid ${checked ? "#00FF66" : "#3A3A48"}`,
+                      boxShadow: checked ? "0 0 4px #00FF66" : "none",
+                    }} />
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: checked ? "#00FF66" : "#3A3A48", letterSpacing: "0.1em" }}>
+                      {label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           <div style={{ maxWidth: 260 }}>
             <div className="section-label" style={{ marginBottom: 6 }}>ROTATION INTERVAL (SECONDS)</div>
             <input
