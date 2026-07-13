@@ -86,14 +86,12 @@ while true; do
   "$CHROMIUM" \
     --ozone-platform="$PLATFORM" \
     --no-sandbox \
-    --disable-gpu \
+    --use-gl=swiftshader \
     --disable-dev-shm-usage \
     --renderer-process-limit=1 \
     --disable-background-networking \
     --disable-extensions \
     --js-flags="--max-old-space-size=192" \
-    --blink-settings=imagesEnabled=true \
-    --num-raster-threads=2 \
     --kiosk \
     --noerrdialogs \
     --disable-infobars \
