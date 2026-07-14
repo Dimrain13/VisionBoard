@@ -1,12 +1,11 @@
 /**
  * MapEmbed — geographic NOC topology map.
  *
- * Animation: sequential opacity pulses on evenly-spaced circles simulate
- * moving packets along each mesh link. Only uses CSS opacity (confirmed
- * working on Pi --disable-gpu). No stroke-dasharray, no transform, no SMIL.
- *
- * Backbone links (Novi/Azure) = more dots, faster speed.
- * Remote links = fewer dots, slower speed.
+ * Animation: CSS Motion Path (offset-path + offset-distance).
+ * Dots physically travel src → dst along each mesh link.
+ * Pure CSS — no rAF, no SMIL, no stroke-dashoffset.
+ * offset-path supported in Chromium 97+ (Pi ships Chromium ≥117).
+ * Falls back to static dot at line midpoint if motion path unsupported.
  */
 import React from "react";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
@@ -50,7 +49,7 @@ const SITE_PX = Object.fromEntries(
 
 export default function MapEmbed() {
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
 
       <ComposableMap
         projection="geoMercator"
@@ -107,6 +106,7 @@ export default function MapEmbed() {
         })}
       </ComposableMap>
 
+      {/* Overlay SVG — animated dots travel along mesh links */}
       <svg
         viewBox="0 0 1000 540"
         style={{
@@ -117,13 +117,22 @@ export default function MapEmbed() {
       >
         <defs>
           <style>{`
-            @keyframes dot-travel {
-              0%   { opacity: 0;    }
-              10%  { opacity: 0.95; }
-              24%  { opacity: 0;    }
-              100% { opacity: 0;    }
+            /*
+             * CSS Motion Path animation — dots travel along offset-path.
+             * offset-distance: 0% = source node, 100% = destination node.
+             * Fade in quickly, stay visible for the journey, fade out on arrival.
+             */
+            @keyframes travel {
+              0%   { offset-distance: 0%;   opacity: 0;   }
+              6%   { opacity: 1;            }
+              88%  { opacity: 1;            }
+              100% { offset-distance: 100%; opacity: 0;   }
             }
-            .dot { animation-name: dot-travel; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
+            .mover {
+              animation-name: travel;
+              animation-timing-function: linear;
+              animation-iteration-count: infinite;
+            }
           `}</style>
         </defs>
 
@@ -131,39 +140,48 @@ export default function MapEmbed() {
           const [x1, y1] = SITE_PX[src];
           const [x2, y2] = SITE_PX[dst];
           const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-          const numDots  = backbone ? 6 : 3;
-          const dur      = backbone ? 1.8 : 3.5;   // seconds for full traversal
-          const r        = backbone ? 2.2 : 1.5;
+
+          // Backbone (hub/cloud) links: faster, more dots
+          // Remote links: slower, fewer dots
+          const numDots = backbone ? 3 : 2;
+          const dur     = backbone ? 1.8 : 3.5;
+          const r       = backbone ? 2.4 : 1.6;
+
+          // Path string in SVG user-unit coordinates
+          const pathD = `M ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)}`;
 
           return (
             <g key={`${src}-${dst}`}>
-              {/* Static faint guide line */}
+              {/* Faint static guide line */}
               <line
                 x1={x1} y1={y1} x2={x2} y2={y2}
                 stroke="#00FF66"
                 strokeWidth={backbone ? 0.7 : 0.35}
-                opacity={backbone ? 0.2 : 0.1}
+                opacity={backbone ? 0.18 : 0.09}
               />
 
-              {/* Sequentially-pulsing circles — opacity only, no transform */}
+              {/*
+               * Moving dots via CSS Motion Path.
+               * - offset-path places each dot at the correct SVG coordinates.
+               * - Negative animation-delay evenly distributes dots along the
+               *   path at page load (already "in transit").
+               * - Per-link phase offset (idx * 0.23) staggers different links
+               *   so they don't all fire simultaneously.
+               * - cx/cy set to line midpoint as a graceful fallback if the
+               *   browser doesn't support offset-path.
+               */}
               {Array.from({ length: numDots }, (_, i) => {
-                const t     = (i + 0.5) / numDots;
-                const cx    = x1 + (x2 - x1) * t;
-                const cy    = y1 + (y2 - y1) * t;
-                // Dot i lights up after dot i-1 → sequence runs src→dst.
-                // Formula: start each dot dur/numDots later than previous,
-                // offset back by one full dur so all dots appear "already running" at page load.
-                // Per-link phase offset staggers different links from each other.
-                const linkOffset = (idx * 0.29) % dur;
-                const delay = (i * dur / numDots) - dur + linkOffset;
+                const delay = -((i * dur) / numDots) + ((idx * 0.23) % dur);
                 return (
                   <circle
                     key={i}
-                    className="dot"
-                    cx={cx} cy={cy}
+                    className="mover"
+                    cx={(x1 + x2) / 2}
+                    cy={(y1 + y2) / 2}
                     r={r}
                     fill="#00FF66"
                     style={{
+                      offsetPath:        `path('${pathD}')`,
                       animationDuration:  `${dur}s`,
                       animationDelay:     `${delay.toFixed(2)}s`,
                     }}
