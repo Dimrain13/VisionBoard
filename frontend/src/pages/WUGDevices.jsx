@@ -1,335 +1,358 @@
 /**
- * WUG Network Topology
- * Circuit-board style hierarchical topology diagrams per location.
- * Fetches from /api/wug/topology — falls back to embedded mock data
- * until the real WUG API is wired up.
+ * WUGDevices — Radial hub-and-spoke NOC topology.
+ *
+ * Layout:
+ *   ┌──────────────────────────────────────────┐
+ *   │  Header: title + KPIs + refresh          │
+ *   │  Status banner                           │
+ *   │  ┌────────── Radial SVG ──────────────┐  │
+ *   │  │  Central WUG POLLER node (cyan)    │  │
+ *   │  │  Spokes to each location           │  │
+ *   │  │  Canvas overlay: traveling dots    │  │
+ *   │  └────────────────────────────────────┘  │
+ *   │  Device roster (scrollable compact table)│
+ *   └──────────────────────────────────────────┘
+ *
+ * Animation (Pi-safe):
+ *   - Sonar rings on central node: CSS opacity keyframe (Pi-confirmed)
+ *   - Traveling data dots: Canvas 2D rAF at 15fps (Pi-confirmed)
+ *   - Offline node pulse: CSS opacity keyframe
  */
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { Network, RefreshCw, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { RefreshCw, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-// ─── Device type styling ───────────────────────────────────────────────────────
-const TYPE = {
-  gateway:     { label: "GATEWAY",  color: "#00E5FF", abbr: "GW"  },
-  switch_core: { label: "CORE SW",  color: "#00FF66", abbr: "CSW" },
-  switch:      { label: "SWITCH",   color: "#4A8CFF", abbr: "SW"  },
-  ap:          { label: "AP",       color: "#FFB014", abbr: "AP"  },
+// ── SVG coordinate space ─────────────────────────────────────────────────────
+const VW = 1000, VH = 500;   // viewBox dimensions
+const CX  = 500, CY  = 230;  // WUG poller center
+const R   = 185;              // spoke radius (center → location node center)
+const NW  = 138, NH = 52;    // location node dimensions
+
+const TYPE_COLOR = {
+  gateway:      "#A78BFA",
+  switch:       "#00FF66",
+  poe_switch:   "#00FF66",
+  access_point: "#00E5FF",
+  camera:       "#FFB014",
+  device:       "#3A3A48",
 };
 
-// ─── Embedded mock topology (used while WUG API isn't connected) ───────────────
+// ── Embedded mock data ────────────────────────────────────────────────────────
 const MOCK = {
   locations: [
-    {
-      id: "novi", name: "Novi HQ",
+    { id: "novi",         name: "Novi HQ",
       devices: [
-        { id: "n-gw",  name: "UDM-Pro",      type: "gateway",     parent_id: null,   ip: "10.202.1.1",  status: "up" },
-        { id: "n-cs",  name: "USW-48-Pro",   type: "switch_core", parent_id: "n-gw", ip: "10.202.1.2",  status: "up" },
-        { id: "n-s1",  name: "USW-24-POE",   type: "switch",      parent_id: "n-cs", ip: "10.202.1.10", status: "up" },
-        { id: "n-s2",  name: "USW-16-POE",   type: "switch",      parent_id: "n-cs", ip: "10.202.1.11", status: "up" },
-        { id: "n-a1",  name: "U6-Pro Lobby", type: "ap",          parent_id: "n-s1", ip: "10.202.1.50", status: "up" },
-        { id: "n-a2",  name: "U6-Pro Office",type: "ap",          parent_id: "n-s1", ip: "10.202.1.51", status: "up" },
-        { id: "n-a3",  name: "U6-LR Whse",   type: "ap",          parent_id: "n-s2", ip: "10.202.1.52", status: "up" },
-        { id: "n-s3",  name: "USW-8 Srv",    type: "switch",      parent_id: "n-s2", ip: "10.202.1.20", status: "up" },
-      ],
-    },
-    {
-      id: "remus", name: "Remus",
+        { id:"n-gw", name:"UDM-Pro",       type:"gateway",     status:"up"   },
+        { id:"n-s1", name:"USW-48-Pro",    type:"switch",      status:"up"   },
+        { id:"n-s2", name:"USW-24-POE",    type:"switch",      status:"up"   },
+        { id:"n-a1", name:"U6-Pro Lobby",  type:"access_point",status:"up"   },
+        { id:"n-a2", name:"U6-Pro Office", type:"access_point",status:"up"   },
+        { id:"n-a3", name:"U6-LR Whs",     type:"access_point",status:"up"   },
+      ] },
+    { id: "remus",        name: "Remus",
       devices: [
-        { id: "r-gw",  name: "USG-Pro",      type: "gateway",     parent_id: null,   ip: "10.202.2.1",  status: "up" },
-        { id: "r-cs",  name: "USW-24",       type: "switch_core", parent_id: "r-gw", ip: "10.202.2.2",  status: "up" },
-        { id: "r-a1",  name: "U6-Lite A",    type: "ap",          parent_id: "r-cs", ip: "10.202.2.50", status: "up" },
-        { id: "r-a2",  name: "U6-Lite B",    type: "ap",          parent_id: "r-cs", ip: "10.202.2.51", status: "up" },
-        { id: "r-s1",  name: "USW-8-POE",    type: "switch",      parent_id: "r-cs", ip: "10.202.2.10", status: "up" },
-      ],
-    },
-    {
-      id: "mt-pleasant", name: "Mt. Pleasant",
+        { id:"r-gw", name:"USG-Pro",   type:"gateway",     status:"up"   },
+        { id:"r-s1", name:"USW-24",    type:"switch",      status:"up"   },
+        { id:"r-a1", name:"U6-Lite A", type:"access_point",status:"down" },
+        { id:"r-a2", name:"U6-Lite B", type:"access_point",status:"up"   },
+      ] },
+    { id: "mt-pleasant",  name: "Mt. Pleasant",
       devices: [
-        { id: "m-gw",  name: "USG-Pro",      type: "gateway",     parent_id: null,   ip: "10.202.3.1",  status: "up" },
-        { id: "m-cs",  name: "USW-16",       type: "switch_core", parent_id: "m-gw", ip: "10.202.3.2",  status: "up" },
-        { id: "m-a1",  name: "U6-Pro Flr 1", type: "ap",          parent_id: "m-cs", ip: "10.202.3.50", status: "up" },
-        { id: "m-a2",  name: "U6-Pro Flr 2", type: "ap",          parent_id: "m-cs", ip: "10.202.3.51", status: "up" },
-        { id: "m-s1",  name: "USW-8",        type: "switch",      parent_id: "m-cs", ip: "10.202.3.10", status: "up" },
-      ],
-    },
-    {
-      id: "constantine", name: "Constantine",
+        { id:"m-gw", name:"USG",          type:"gateway",     status:"up" },
+        { id:"m-s1", name:"USW-16",       type:"switch",      status:"up" },
+        { id:"m-a1", name:"U6-Pro Flr 1", type:"access_point",status:"up" },
+        { id:"m-a2", name:"U6-Pro Flr 2", type:"access_point",status:"up" },
+      ] },
+    { id: "ovid",         name: "Ovid",
       devices: [
-        { id: "c-gw",  name: "USG",          type: "gateway",     parent_id: null,   ip: "10.202.4.1",  status: "up" },
-        { id: "c-cs",  name: "USW-8",        type: "switch_core", parent_id: "c-gw", ip: "10.202.4.2",  status: "up" },
-        { id: "c-a1",  name: "U6-Lite",      type: "ap",          parent_id: "c-cs", ip: "10.202.4.50", status: "up" },
-        { id: "c-s1",  name: "USW-8-POE",    type: "switch",      parent_id: "c-cs", ip: "10.202.4.10", status: "up" },
-      ],
-    },
-    {
-      id: "canton", name: "Canton",
+        { id:"o-gw", name:"USG",      type:"gateway",     status:"up" },
+        { id:"o-s1", name:"USW-8",    type:"switch",      status:"up" },
+        { id:"o-a1", name:"U6-Lite",  type:"access_point",status:"up" },
+      ] },
+    { id: "middlebury",   name: "Middlebury",
       devices: [
-        { id: "k-gw",  name: "USG-Pro",      type: "gateway",     parent_id: null,   ip: "10.202.5.1",  status: "up" },
-        { id: "k-cs",  name: "USW-24-POE",   type: "switch_core", parent_id: "k-gw", ip: "10.202.5.2",  status: "up" },
-        { id: "k-s1",  name: "USW-8-POE",    type: "switch",      parent_id: "k-cs", ip: "10.202.5.10", status: "up" },
-        { id: "k-a1",  name: "U6-Pro Office",type: "ap",          parent_id: "k-cs", ip: "10.202.5.50", status: "up" },
-        { id: "k-a2",  name: "U6-Lite Flr 2",type: "ap",          parent_id: "k-s1", ip: "10.202.5.51", status: "up" },
-      ],
-    },
+        { id:"mb-gw", name:"USG-Pro",    type:"gateway",     status:"up" },
+        { id:"mb-s1", name:"USW-16-POE", type:"poe_switch",  status:"up" },
+        { id:"mb-a1", name:"U6-LR",      type:"access_point",status:"up" },
+      ] },
+    { id: "canton",       name: "Canton",
+      devices: [
+        { id:"k-gw", name:"USG-Pro",        type:"gateway",     status:"up" },
+        { id:"k-s1", name:"USW-24-POE",     type:"poe_switch",  status:"up" },
+        { id:"k-a1", name:"U6-Pro Office",  type:"access_point",status:"up" },
+        { id:"k-a2", name:"U6-Lite Flr 2",  type:"access_point",status:"up" },
+      ] },
+    { id: "constantine",  name: "Constantine",
+      devices: [
+        { id:"c-gw", name:"USG",     type:"gateway",     status:"up" },
+        { id:"c-s1", name:"USW-8",   type:"switch",      status:"up" },
+        { id:"c-a1", name:"U6-Lite", type:"access_point",status:"up" },
+      ] },
+    { id: "canton-whs",   name: "Canton Whs",
+      devices: [
+        { id:"cw-gw", name:"USG",     type:"gateway",     status:"up" },
+        { id:"cw-s1", name:"USW-8",   type:"switch",      status:"up" },
+        { id:"cw-a1", name:"U6-Nano", type:"access_point",status:"up" },
+      ] },
   ],
 };
 
-// ─── Tree layout ───────────────────────────────────────────────────────────────
-const NW = 122;  // node width
-const NH = 34;   // node height
-const LH = 72;   // level (depth) height
-const CG = 12;   // column gap between sibling nodes
-
-function buildLayout(devices) {
-  if (!devices?.length) return { nodes: [], svgW: NW, svgH: NH + 16 };
-
-  const m = {};
-  devices.forEach(d => (m[d.id] = { ...d, children: [] }));
-
-  let root = null;
-  devices.forEach(d => {
-    if (d.parent_id && m[d.parent_id]) m[d.parent_id].children.push(m[d.id]);
-    else root = m[d.id];
+// ── Position each location node around the central hub ────────────────────────
+function computeLayout(locations) {
+  const N = locations.length;
+  return locations.map((loc, i) => {
+    const angle = (2 * Math.PI * i / N) - Math.PI / 2;
+    return {
+      ...loc,
+      angle,
+      x: CX + R * Math.cos(angle),  // center of node
+      y: CY + R * Math.sin(angle),
+      nx: CX + R * Math.cos(angle) - NW / 2,  // top-left of node rect
+      ny: CY + R * Math.sin(angle) - NH / 2,
+    };
   });
-  if (!root) return { nodes: [], svgW: NW, svgH: NH + 16 };
-
-  const leaves = n => (!n.children.length ? 1 : n.children.reduce((s, c) => s + leaves(c), 0));
-
-  const place = (n, x0, d) => {
-    n.depth = d;
-    const lc = leaves(n);
-    n.x = x0 + (lc * (NW + CG) - CG) / 2 - NW / 2;
-    n.y = d * LH + 14;
-    let cx = x0;
-    n.children.forEach(c => { place(c, cx, d + 1); cx += leaves(c) * (NW + CG); });
-  };
-  place(root, 0, 0);
-
-  const flat = [];
-  const walk = n => { flat.push(n); n.children.forEach(walk); };
-  walk(root);
-
-  const maxD  = Math.max(...flat.map(n => n.depth));
-  const svgW  = leaves(root) * (NW + CG) - CG;
-  const svgH  = maxD * LH + NH + 24;
-  return { nodes: flat, svgW, svgH };
 }
 
-// Orthogonal elbow connector: parent-bottom → right-angle → child-top
-function elbow(p, c) {
-  const px = p.x + NW / 2, py = p.y + NH;
-  const cx = c.x + NW / 2, cy = c.y;
-  const my = py + (cy - py) * 0.44;
-  return `M${px},${py} L${px},${my} L${cx},${my} L${cx},${cy}`;
+// Build canvas dot definitions for spoke animation
+function buildSpokeDots(locs) {
+  return locs.flatMap((loc, i) => {
+    const hasIssue = loc.devices.some(d => d.status === "down");
+    const numDots  = 3;
+    const speed    = 0.20;
+    return Array.from({ length: numDots }, (_, j) => ({
+      x1: CX, y1: CY,
+      x2: loc.x, y2: loc.y,
+      speed, hasIssue,
+      progress: (j / numDots + i * 0.13) % 1,
+    }));
+  });
 }
 
-// ─── Single location topology card ────────────────────────────────────────────
-function LocationCard({ loc }) {
-  const { nodes, svgW, svgH } = buildLayout(loc.devices);
-  const downCount  = loc.devices.filter(d => d.status === "down").length;
-  const alertCount = loc.devices.filter(d => d.alert).length;
-  const hasIssue   = downCount > 0 || alertCount > 0;
-  const accentColor = hasIssue ? "#FF2A2A" : "#1C2C34";
-  const upCount    = loc.devices.filter(d => d.status !== "down").length;
-  const uid        = `wug-${loc.id}`;
+// ── Radial topology with canvas overlay ──────────────────────────────────────
+function RadialTopology({ locs }) {
+  const canvasRef = useRef(null);
+  const dotDefs   = useRef([]);
+
+  // Recompute dot definitions whenever layout changes
+  useEffect(() => {
+    dotDefs.current = buildSpokeDots(locs).map(d => ({ ...d }));
+  }, [locs]);
+
+  // Canvas animation: 15fps, same coordinate transform as SVG viewBox
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const syncSize = () => {
+      const p = canvas.parentElement;
+      if (p) { canvas.width = p.clientWidth; canvas.height = p.clientHeight; }
+    };
+    syncSize();
+    window.addEventListener("resize", syncSize);
+
+    const ctx  = canvas.getContext("2d");
+    let animId = null, lastTs = null, acc = 0;
+    const FRAME = 1000 / 15;
+
+    const tick = (ts) => {
+      animId = requestAnimationFrame(tick);
+      if (!lastTs) { lastTs = ts; return; }
+      acc += Math.min(ts - lastTs, 50); lastTs = ts;
+      if (acc < FRAME) return;
+      const dt = acc / 1000; acc = 0;
+
+      const cW = canvas.width, cH = canvas.height;
+      if (!cW || !cH) return;
+
+      // Same preserveAspectRatio="xMidYMid meet" transform as SVG
+      const scale   = Math.min(cW / VW, cH / VH);
+      const offsetX = (cW - VW * scale) / 2;
+      const offsetY = (cH - VH * scale) / 2;
+
+      ctx.clearRect(0, 0, cW, cH);
+
+      for (const d of dotDefs.current) {
+        d.progress += d.speed * dt;
+        if (d.progress >= 1) d.progress -= 1;
+
+        const t   = d.progress;
+        const svgX = d.x1 + (d.x2 - d.x1) * t;
+        const svgY = d.y1 + (d.y2 - d.y1) * t;
+        const cx  = svgX * scale + offsetX;
+        const cy  = svgY * scale + offsetY;
+
+        const alpha = t < 0.08 ? t / 0.08 : t > 0.88 ? (1 - t) / 0.12 : 1;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle   = d.hasIssue ? "#FF4444" : "#00FF66";
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3 * scale, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    animId = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(animId); window.removeEventListener("resize", syncSize); };
+  }, []);  // mounts once; dotDefs ref updates without re-running
 
   return (
-    <div
-      data-testid={`wug-card-${loc.id}`}
-      style={{
-        flex: "1 1 0",
-        minWidth: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "#070710",
-        borderTop: `2px solid ${hasIssue ? "#FF2A2A" : "#1C3040"}`,
-        border: `1px solid ${hasIssue ? "#1E0C0C" : "#10101C"}`,
-        borderTopWidth: 2,
-        borderTopColor: hasIssue ? "#FF2A2A" : "#1C3040",
-        overflow: "hidden",
-        boxShadow: hasIssue ? "0 0 18px rgba(255,42,42,0.06)" : "none",
-      }}
-    >      {/* ── Card header ── */}
-      <div style={{ padding: "9px 13px 8px", borderBottom: "1px solid #0E0E1A", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
-          <span style={{
-            fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, fontWeight: 700,
-            color: hasIssue ? "#FF8080" : "#C4C4D8", letterSpacing: "0.15em",
-          }}>
-            {loc.name.toUpperCase()}
-          </span>
-          {hasIssue ? (
-            <span style={{
-              fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#FF4444",
-              background: "#180808", border: "1px solid #FF2A2A33",
-              padding: "2px 6px", letterSpacing: "0.1em",
-            }} data-testid={`wug-alert-${loc.id}`}>
-              {downCount} DOWN
-            </span>
-          ) : (
-            <span style={{
-              width: 7, height: 7, borderRadius: "1px",
-              background: "#00FF66", boxShadow: "0 0 5px #00FF66",
-              display: "inline-block", flexShrink: 0,
-            }} />
-          )}
-        </div>
-        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 6.5, color: "#28283C", letterSpacing: "0.08em" }}>
-          {upCount}/{loc.devices.length} DEVICES UP
-        </div>
-      </div>
+    <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+      {/* ── Static SVG topology ── */}
+      <svg
+        data-testid="wug-radial-svg"
+        viewBox={`0 0 ${VW} ${VH}`}
+        style={{ width: "100%", height: "100%", display: "block" }}
+      >
+        <defs>
+          <style>{`
+            @keyframes wug-sonar {
+              0%   { opacity: 0.55; }
+              100% { opacity: 0;    }
+            }
+            @keyframes wug-offline-pulse {
+              0%, 100% { opacity: 0.2; }
+              50%       { opacity: 0.8; }
+            }
+            @keyframes wug-center-breathe {
+              0%, 100% { opacity: 0.85; }
+              50%       { opacity: 1;   }
+            }
+          `}</style>
+          {/* Dot-grid background */}
+          <pattern id="wug-dotgrid" width="28" height="28" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="0.8" fill="#0D0D1E" />
+          </pattern>
+        </defs>
 
-      {/* ── SVG topology ── */}
-      <div style={{ padding: "10px 8px 12px" }}>
-        <svg
-          width="100%"
-          viewBox={`-6 0 ${svgW + 12} ${svgH}`}
-          preserveAspectRatio="xMidYMin meet"
-          style={{ display: "block" }}
-        >
-          <defs>
-            {/* Subtle grid background */}
-            <pattern id={`${uid}-grid`} width="22" height="22" patternUnits="userSpaceOnUse">
-              <path d="M22 0L0 0 0 22" fill="none" stroke="#0A0A16" strokeWidth="0.4" />
-            </pattern>
-            {/* Junction dot for line branches */}
-            <circle id={`${uid}-dot`} r="2.5" fill="#0D1A24" />
-            <style>{`
-              @keyframes ${uid}-flow { from{stroke-dashoffset:0} to{stroke-dashoffset:-28} }
-              @keyframes ${uid}-down { 0%,100%{opacity:.3} 50%{opacity:.9} }
-            `}</style>
-          </defs>
+        {/* Background dot grid */}
+        <rect x="0" y="0" width={VW} height={VH} fill="url(#wug-dotgrid)" />
 
-          {/* PCB-style grid background */}
-          <rect x="-6" y="0" width={svgW + 12} height={svgH} fill={`url(#${uid}-grid)`} />
+        {/* ── Spokes: center → each location ── */}
+        {locs.map(loc => {
+          const hasIssue = loc.devices.some(d => d.status === "down");
+          const color    = hasIssue ? "#FF2A2A" : "#00FF66";
+          return (
+            <line key={`spoke-${loc.id}`}
+              x1={CX} y1={CY} x2={loc.x} y2={loc.y}
+              stroke={color}
+              strokeWidth={hasIssue ? 0.9 : 0.6}
+              opacity={hasIssue ? 0.4 : 0.18}
+            />
+          );
+        })}
 
-          {/* ── Connector traces ── */}
-          {nodes.flatMap(n =>
-            (n.children || []).map(child => {
-              const tc      = TYPE[n.type] || TYPE.switch;
-              const isLive  = n.status !== "down" && child.status !== "down";
-              const d       = elbow(n, child);
-              return (
-                <g key={`e-${n.id}-${child.id}`}>
-                  {/* Substrate trace (dark channel) */}
-                  <path d={d} fill="none" stroke="#0C1020" strokeWidth="2.5" strokeLinecap="square" />
-                  {/* Active color trace */}
-                  <path d={d} fill="none" stroke={tc.color} strokeWidth="1"
-                    strokeLinecap="square" opacity="0.25" />
-                  {/* Flowing data pulse (when both ends are up) */}
-                  {isLive && (
-                    <path d={d} fill="none" stroke={tc.color}
-                      strokeWidth="1.5" strokeDasharray="4 20"
-                      strokeLinecap="round" opacity="0.60"
-                      style={{ animation: `${uid}-flow 2.4s linear infinite` }} />
-                  )}
-                  {/* Branch junction dot at parent bottom */}
-                  <circle cx={n.x + NW / 2} cy={n.y + NH + 1} r="2"
-                    fill={tc.color} opacity="0.45" />
-                </g>
-              );
-            })
-          )}
+        {/* ── WUG Poller: sonar rings ── */}
+        {[1.6, 2.3, 3.1].map((factor, i) => (
+          <circle key={`ring-${i}`}
+            cx={CX} cy={CY} r={36 * factor}
+            fill="none" stroke="#00E5FF" strokeWidth="0.8"
+            style={{
+              animation: "wug-sonar 2.6s ease-out infinite",
+              animationDelay: `${i * 0.85}s`,
+              opacity: 0,
+            }}
+          />
+        ))}
 
-          {/* ── Device nodes ── */}
-          {nodes.map(n => {
-            const tc     = TYPE[n.type] || TYPE.switch;
-            const down   = n.status === "down";
-            const alert  = n.alert;
-            const bc     = down ? "#FF2A2A" : tc.color;
-            const textC  = down ? "#FF7070" : "#C6C6DC";
-            const subC   = down ? "#4A2020" : "#26263A";
+        {/* ── WUG Poller: outer glow ring ── */}
+        <circle cx={CX} cy={CY} r={42} fill="none" stroke="#00E5FF" strokeWidth="1" opacity="0.15" />
 
-            return (
-              <g key={n.id} data-testid={`wug-node-${n.id}`}>
-                {/* Outer alert ring */}
-                {down && (
-                  <rect x={n.x - 3} y={n.y - 3} width={NW + 6} height={NH + 6} rx="3"
-                    fill="none" stroke="#FF2A2A" strokeWidth="1" opacity="0.25"
-                    style={{ animation: `${uid}-down 1.8s ease-in-out infinite` }} />
-                )}
+        {/* ── WUG Poller: main hexagon-ish shape (octagon using rect+clip) ── */}
+        <rect x={CX - 30} y={CY - 30} width={60} height={60} rx="6"
+          fill="#060614" stroke="#00E5FF" strokeWidth="1.5"
+          style={{ animation: "wug-center-breathe 3s ease-in-out infinite" }} />
+        {/* Inner accent */}
+        <rect x={CX - 22} y={CY - 22} width={44} height={44} rx="4"
+          fill="none" stroke="#00E5FF" strokeWidth="0.5" opacity="0.35" />
+        {/* WUG label */}
+        <text x={CX} y={CY - 6} fontSize="9" fontFamily="'JetBrains Mono',monospace"
+          fill="#00E5FF" textAnchor="middle" fontWeight={700} letterSpacing="0.15em">
+          WUG
+        </text>
+        <text x={CX} y={CY + 7} fontSize="6" fontFamily="'JetBrains Mono',monospace"
+          fill="#00E5FF" textAnchor="middle" letterSpacing="0.12em" opacity="0.65">
+          POLLER
+        </text>
+        {/* Center dot */}
+        <circle cx={CX} cy={CY} r="3.5" fill="#00E5FF" opacity="0.9"
+          data-testid="node-wug-poller" />
 
-                {/* Node body */}
-                <rect x={n.x} y={n.y} width={NW} height={NH} rx="2"
-                  fill={down ? "#100808" : "#0B0B16"}
-                  stroke={bc} strokeWidth={down ? 1.5 : 0.7} />
+        {/* ── Location nodes ── */}
+        {locs.map(loc => {
+          const hasIssue  = loc.devices.some(d => d.status === "down");
+          const downCount = loc.devices.filter(d => d.status === "down").length;
+          const upCount   = loc.devices.filter(d => d.status !== "down").length;
+          const total     = loc.devices.length;
+          const bc        = hasIssue ? "#FF2A2A" : "#00FF66";
+          const textC     = hasIssue ? "#FF8080" : "#C4C4D8";
 
-                {/* Left type accent bar */}
-                <rect x={n.x} y={n.y} width="3" height={NH} rx="1"
-                  fill={bc} opacity={down ? 0.65 : 0.90} />
+          return (
+            <g key={`node-${loc.id}`} data-testid={`wug-node-${loc.id}`}>
+              {/* Offline pulse ring */}
+              {hasIssue && (
+                <rect
+                  x={loc.nx - 5} y={loc.ny - 5}
+                  width={NW + 10} height={NH + 10} rx="5"
+                  fill="none" stroke="#FF2A2A" strokeWidth="1.5"
+                  style={{ animation: "wug-offline-pulse 1.6s ease-in-out infinite" }}
+                />
+              )}
 
-                {/* Corner type badge */}
-                <rect x={n.x + NW - 22} y={n.y + 1} width={21} height={10} rx="1"
-                  fill={down ? "#1A0A0A" : "#0E0E1C"} opacity="0.9" />
-                <text x={n.x + NW - 11} y={n.y + 9}
-                  fontSize="5.2" fontFamily="'JetBrains Mono',monospace"
-                  fill={bc} textAnchor="middle" letterSpacing="0.06em" fontWeight={700}
-                  opacity="0.8">
-                  {tc.abbr}
-                </text>
+              {/* Node background */}
+              <rect x={loc.nx} y={loc.ny} width={NW} height={NH} rx="3"
+                fill="#070710"
+                stroke={bc} strokeWidth={hasIssue ? 1.2 : 0.7} />
 
-                {/* Device name */}
-                <text x={n.x + 11} y={n.y + 13.5}
-                  fontSize="7.5" fontFamily="'JetBrains Mono',monospace"
-                  fill={textC} letterSpacing="0.03em"
-                  fontWeight={n.type === "gateway" ? 700 : 400}>
-                  {n.name}
-                </text>
+              {/* Left accent bar */}
+              <rect x={loc.nx} y={loc.ny} width="3" height={NH} rx="1"
+                fill={bc} opacity={hasIssue ? 0.7 : 0.85} />
 
-                {/* IP address */}
-                <text x={n.x + 11} y={n.y + 25}
-                  fontSize="5.8" fontFamily="'JetBrains Mono',monospace"
-                  fill={subC} letterSpacing="0.04em">
-                  {n.ip}
-                </text>
+              {/* Site name */}
+              <text x={loc.nx + 11} y={loc.ny + 17}
+                fontSize="9" fontFamily="'JetBrains Mono',monospace"
+                fill={textC} fontWeight={700} letterSpacing="0.12em">
+                {loc.name.toUpperCase()}
+              </text>
 
-                {/* Status dot */}
-                <circle cx={n.x + NW - 8} cy={n.y + NH / 2} r="3.5"
-                  fill={bc} opacity={down ? 1 : 0.75}
-                  style={down ? { animation: `${uid}-down 1.8s ease-in-out infinite` } : {}} />
+              {/* Up/down count */}
+              <text x={loc.nx + 11} y={loc.ny + 31}
+                fontSize="7.5" fontFamily="'JetBrains Mono',monospace"
+                fill={hasIssue ? "#FF4444" : "#286040"} letterSpacing="0.06em">
+                {upCount}/{total} UP
+                {downCount > 0 ? ` · ${downCount} DOWN` : ""}
+              </text>
 
-                {/* DOWN label */}
-                {down && (
-                  <text x={n.x + NW / 2} y={n.y + NH + 10}
-                    fontSize="5.5" fontFamily="'JetBrains Mono',monospace"
-                    fill="#FF4444" textAnchor="middle" fontWeight={700} letterSpacing="0.1em">
-                    ▼ DOWN
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
+              {/* Device type mini-dots */}
+              {loc.devices.slice(0, 8).map((dev, di) => (
+                <circle key={dev.id}
+                  cx={loc.nx + NW - 14 - di * 10} cy={loc.ny + 15}
+                  r="3.2"
+                  fill={dev.status === "down" ? "#FF2A2A" : (TYPE_COLOR[dev.type] || "#3A3A48")}
+                  opacity={dev.status === "down" ? 0.9 : 0.55}
+                />
+              ))}
+
+              {/* Status corner dot */}
+              <circle cx={loc.nx + NW - 8} cy={loc.ny + NH - 10} r="4"
+                fill={bc} opacity={hasIssue ? 1 : 0.7}
+                style={hasIssue ? { animation: "wug-offline-pulse 1.6s ease-in-out infinite" } : {}} />
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* ── Canvas overlay: traveling data dots ── */}
+      <canvas
+        ref={canvasRef}
+        style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+      />
     </div>
   );
 }
 
-// ─── Legend ────────────────────────────────────────────────────────────────────
-function Legend() {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-      {Object.entries(TYPE).map(([, tc]) => (
-        <span key={tc.abbr} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 1, borderLeft: `3px solid ${tc.color}`, background: "#0B0B16", display: "inline-block" }} />
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#36364A", letterSpacing: "0.1em" }}>
-            {tc.label}
-          </span>
-        </span>
-      ))}
-      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ width: 18, height: 1.5, background: "#4A8CFF", opacity: 0.6, display: "inline-block", boxShadow: "0 0 3px #4A8CFF" }} />
-        <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#36364A", letterSpacing: "0.1em" }}>
-          ACTIVE TRACE
-        </span>
-      </span>
-    </div>
-  );
-}
-
-// ─── Main page ─────────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function WUGDevices() {
   const [data,      setData]      = useState(MOCK);
   const [loading,   setLoading]   = useState(false);
@@ -342,16 +365,12 @@ export default function WUGDevices() {
     axios.get(`${API}/wug/topology`, { timeout: 30000 })
       .then(r => {
         if (r.data?.locations?.length) {
-          setData(r.data);
-          setIsMock(false);
-          setWugError(null);
+          setData(r.data); setIsMock(false); setWugError(null);
         } else if (r.data?.source === "error") {
           setWugError(r.data.message || "WUG API error");
-        } else if (r.data?.source === "pending") {
-          setWugError(null); // Not an error, just not configured
         }
       })
-      .catch(e => { setWugError(e.message); })
+      .catch(e => setWugError(e.message))
       .finally(() => { setLoading(false); setLastFetch(new Date()); });
   };
 
@@ -361,18 +380,19 @@ export default function WUGDevices() {
     return () => clearInterval(iv);
   }, []);
 
+  const locs         = computeLayout(data.locations);
   const totalDevices = data.locations.reduce((s, l) => s + l.devices.length, 0);
   const totalDown    = data.locations.reduce((s, l) => s + l.devices.filter(d => d.status === "down").length, 0);
-  const totalAlerts  = data.locations.reduce((s, l) => s + l.devices.filter(d => d.alert).length, 0);
-  const anyIssue     = totalDown > 0 || totalAlerts > 0;
+  const anyIssue     = totalDown > 0;
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
 
-      {/* ── Page header ── */}
+      {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <h1 style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700, color: "#E2E2E5", letterSpacing: "0.18em" }}>
+          <h1 style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700,
+            color: "#E2E2E5", letterSpacing: "0.18em" }}>
             WUG NETWORK TOPOLOGY
           </h1>
           {isMock && !wugError && (
@@ -382,146 +402,107 @@ export default function WUGDevices() {
             </span>
           )}
           {wugError && (
-            <span data-testid="wug-error-banner" style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#FF4444",
-              background: "#180808", border: "1px solid #FF2A2A33", padding: "2px 7px", letterSpacing: "0.1em" }}>
+            <span data-testid="wug-error-banner" style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5,
+              color: "#FF4444", background: "#180808", border: "1px solid #FF2A2A33", padding: "2px 7px", letterSpacing: "0.1em" }}>
               WUG ERROR: {wugError.slice(0, 80)}
             </span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <Legend />
-
-          {/* Stats */}
-          <div style={{ display: "flex", gap: 16 }}>
-            {[
-              ["LOCATIONS", data.locations.length, "#3A3A50"],
-              ["DEVICES",   totalDevices,           "#3A3A50"],
-              ["DOWN",      totalDown,               totalDown > 0 ? "#FF4444" : "#3A3A50"],
-              ["ALERTS",    totalAlerts,             totalAlerts > 0 ? "#FFB014" : "#3A3A50"],
-            ].map(([label, val, color]) => (
-              <div key={label} style={{ textAlign: "center" }}>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 14, fontWeight: 700, color, lineHeight: 1 }}>{val}</div>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A", letterSpacing: "0.1em", marginTop: 2 }}>{label}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Refresh */}
-          <button
-            data-testid="wug-refresh-btn"
-            onClick={fetchTopology}
-            style={{
-              background: "transparent", border: "1px solid #1C1C2A",
-              color: "#3A3A50", cursor: "pointer", padding: "5px 10px",
-              display: "flex", alignItems: "center", gap: 6,
-              fontFamily: "'JetBrains Mono',monospace", fontSize: 8, letterSpacing: "0.1em",
-            }}
-          >
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {[
+            ["SITES",   data.locations.length, "#3A3A50"],
+            ["DEVICES", totalDevices,           "#C4C4D8"],
+            ["DOWN",    totalDown,               totalDown > 0 ? "#FF4444" : "#3A3A50"],
+          ].map(([label, val, color]) => (
+            <div key={label} style={{ textAlign: "center" }}>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color, lineHeight: 1 }}>{val}</div>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A", letterSpacing: "0.1em", marginTop: 2 }}>{label}</div>
+            </div>
+          ))}
+          <button data-testid="wug-refresh-btn" onClick={fetchTopology}
+            style={{ background: "transparent", border: "1px solid #1C1C2A", color: "#3A3A50",
+              cursor: "pointer", padding: "5px 10px", display: "flex", alignItems: "center", gap: 6,
+              fontFamily: "'JetBrains Mono',monospace", fontSize: 8, letterSpacing: "0.1em" }}>
             <RefreshCw size={10} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
             REFRESH
           </button>
+          {lastFetch && (
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A", letterSpacing: "0.06em" }}>
+              {lastFetch.toLocaleTimeString()}
+            </span>
+          )}
         </div>
       </div>
 
       {/* ── Status banner ── */}
       {anyIssue ? (
-        <div style={{
-          flexShrink: 0, padding: "7px 14px", background: "#140808",
-          border: "1px solid #FF2A2A33", display: "flex", alignItems: "center", gap: 10,
-        }} data-testid="wug-alert-banner">
+        <div data-testid="wug-alert-banner" style={{ flexShrink: 0, padding: "6px 14px", background: "#140808",
+          border: "1px solid #FF2A2A33", display: "flex", alignItems: "center", gap: 10 }}>
           <AlertTriangle size={12} color="#FF4444" />
           <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#FF6060", letterSpacing: "0.1em" }}>
             {totalDown} DEVICE{totalDown !== 1 ? "S" : ""} DOWN — CHECK AFFECTED LOCATIONS
           </span>
         </div>
       ) : (
-        <div style={{
-          flexShrink: 0, padding: "7px 14px", background: "#080F08",
-          border: "1px solid #00FF6622", display: "flex", alignItems: "center", gap: 10,
-        }} data-testid="wug-status-ok">
+        <div data-testid="wug-status-ok" style={{ flexShrink: 0, padding: "6px 14px", background: "#080F08",
+          border: "1px solid #00FF6622", display: "flex", alignItems: "center", gap: 10 }}>
           <CheckCircle2 size={12} color="#00FF66" />
           <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#00CC44", letterSpacing: "0.1em" }}>
-            ALL NETWORK DEVICES OPERATIONAL — {totalDevices} DEVICES MONITORED ACROSS {data.locations.length} SITES
+            ALL {totalDevices} DEVICES OPERATIONAL ACROSS {data.locations.length} SITES
           </span>
         </div>
       )}
 
-      {/* ── Location topology grid ── */}
-      <div style={{
-        display: "flex",
-        gap: 10,
-        alignItems: "flex-start",
-        flexShrink: 0,
-      }}>
-        {data.locations.map(loc => (
-          <LocationCard key={loc.id} loc={loc} />
-        ))}
-      </div>
+      {/* ── Radial topology (main area, flex:1) ── */}
+      <RadialTopology locs={locs} />
 
       {/* ── Device roster ── */}
-      <div style={{
-        flex: 1,
-        minHeight: 0,
-        background: "#07070F",
-        border: "1px solid #10101C",
-        borderTop: "2px solid #1C2830",
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-      }}>
-        {/* Roster header */}
-        <div style={{
-          padding: "8px 16px", borderBottom: "1px solid #0E0E1A",
-          display: "flex", alignItems: "center", gap: 16, flexShrink: 0,
-        }}>
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, fontWeight: 700,
+      <div style={{ flexShrink: 0, height: 160, background: "#07070F",
+        border: "1px solid #10101C", borderTop: "2px solid #1C2830",
+        display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+        <div style={{ padding: "6px 16px", borderBottom: "1px solid #0E0E1A",
+          display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, fontWeight: 700,
             color: "#505068", letterSpacing: "0.18em" }}>
             DEVICE ROSTER
           </span>
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#282838", letterSpacing: "0.08em" }}>
-            {totalDevices} DEVICES · POLLING EVERY 60S · {lastFetch ? `LAST: ${lastFetch.toLocaleTimeString()}` : "—"}
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A", letterSpacing: "0.06em" }}>
+            {totalDevices} DEVICES · POLLING EVERY 60S
           </span>
         </div>
 
-        {/* Roster body */}
-        <div style={{ flex: 1, overflow: "auto", padding: "6px 12px 10px" }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {data.locations.map(loc =>
-              loc.devices.map(d => {
-                const tc   = TYPE[d.type] || TYPE.switch;
-                const down = d.status === "down";
+        <div style={{ flex: 1, overflow: "auto", padding: "4px 12px 8px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {data.locations.flatMap(loc =>
+              loc.devices.map(dev => {
+                const down = dev.status === "down";
+                const tc   = TYPE_COLOR[dev.type] || "#3A3A48";
                 return (
-                  <div key={d.id} data-testid={`roster-${d.id}`}
+                  <div key={dev.id} data-testid={`wug-roster-${dev.id}`}
                     style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      padding: "5px 10px 5px 0",
-                      borderLeft: `2px solid ${down ? "#FF2A2A" : tc.color}`,
-                      paddingLeft: 8,
+                      display: "flex", alignItems: "center", gap: 7,
+                      padding: "4px 10px 4px 0", paddingLeft: 7,
+                      borderLeft: `2px solid ${down ? "#FF2A2A" : tc}`,
                       background: down ? "#0E0606" : "#0A0A13",
-                      minWidth: 200, flex: "1 1 200px",
+                      minWidth: 190, flex: "1 1 190px",
                     }}>
-                    {/* Status dot */}
-                    <span style={{
-                      width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                      background: down ? "#FF2A2A" : tc.color,
-                      boxShadow: `0 0 4px ${down ? "#FF2A2A" : tc.color}`,
-                    }} />
-                    {/* Device info */}
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8,
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
+                      background: down ? "#FF2A2A" : tc, boxShadow: `0 0 4px ${down ? "#FF2A2A" : tc}` }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5,
                         color: down ? "#FF7070" : "#B0B0C8", letterSpacing: "0.04em",
                         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {d.name}
+                        {dev.name}
                       </div>
-                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 6.5,
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 6,
                         color: "#28283A", letterSpacing: "0.04em" }}>
-                        {loc.name} · {d.ip}
+                        {loc.name} · {dev.ip || dev.type}
                       </div>
                     </div>
-                    {/* Type badge */}
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 6,
-                      color: tc.color, opacity: 0.6, letterSpacing: "0.08em", flexShrink: 0 }}>
-                      {tc.abbr}
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 5.5,
+                      color: down ? "#FF4444" : "#28283A", letterSpacing: "0.08em", flexShrink: 0 }}>
+                      {down ? "DOWN" : "UP"}
                     </span>
                   </div>
                 );
