@@ -119,8 +119,8 @@ export default function MapEmbed() {
           <style>{`
             @keyframes dot-travel {
               0%   { opacity: 0;    }
-              8%   { opacity: 0.95; }
-              16%  { opacity: 0;    }
+              10%  { opacity: 0.95; }
+              24%  { opacity: 0;    }
               100% { opacity: 0;    }
             }
             .dot { animation-name: dot-travel; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
@@ -150,8 +150,12 @@ export default function MapEmbed() {
                 const t     = (i + 0.5) / numDots;
                 const cx    = x1 + (x2 - x1) * t;
                 const cy    = y1 + (y2 - y1) * t;
-                // Each dot delayed by dur/numDots relative to prev, plus per-link offset
-                const delay = -((dur * i / numDots) + (idx * 0.29) % dur);
+                // Dot i lights up after dot i-1 → sequence runs src→dst.
+                // Formula: start each dot dur/numDots later than previous,
+                // offset back by one full dur so all dots appear "already running" at page load.
+                // Per-link phase offset staggers different links from each other.
+                const linkOffset = (idx * 0.29) % dur;
+                const delay = (i * dur / numDots) - dur + linkOffset;
                 return (
                   <circle
                     key={i}
