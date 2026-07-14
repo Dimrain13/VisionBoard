@@ -1,11 +1,9 @@
 /**
  * MapEmbed — geographic NOC topology map.
- *
- * Animation: pure requestAnimationFrame moving circle cx/cy attributes.
- * No SMIL, no CSS animation, no stroke-dasharray.
- * Works under --disable-gpu (Skia CPU rasterizer + rAF timer fallback).
+ * Animation: CSS opacity pulse on SVG <line> elements via @keyframes.
+ * This is the most compatible approach for Pi Chromium --disable-gpu.
  */
-import React, { useRef, useEffect } from "react";
+import React from "react";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
 
 const GEO_URL           = "/us-states-10m.json";
@@ -32,7 +30,6 @@ for (let i = 0; i < SITE_KEYS.length; i++)
   for (let j = i + 1; j < SITE_KEYS.length; j++)
     MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j], idx: i * SITE_KEYS.length + j });
 
-// Mercator projection matching ComposableMap (scale 4500, center [-84.8, 42.4], 1000×540)
 const W = 1000, H = 540;
 function mercY(lat) { return Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)); }
 const _CY = mercY(42.4);
@@ -47,37 +44,9 @@ const SITE_PX = Object.fromEntries(
 );
 
 export default function MapEmbed() {
-  const svgRef = useRef(null);
-
-  useEffect(() => {
-    let frame;
-    const origin = performance.now();
-
-    const tick = (now) => {
-      frame = requestAnimationFrame(tick);
-      const elapsed = now - origin;
-
-      svgRef.current?.querySelectorAll("circle.pkt").forEach(el => {
-        const dur = parseFloat(el.dataset.dur);   // ms
-        const off = parseFloat(el.dataset.off);   // ms offset
-        const x1  = parseFloat(el.dataset.x1);
-        const y1  = parseFloat(el.dataset.y1);
-        const x2  = parseFloat(el.dataset.x2);
-        const y2  = parseFloat(el.dataset.y2);
-        const t   = ((elapsed + off) % dur) / dur;  // 0..1
-        el.setAttribute("cx", String(x1 + (x2 - x1) * t));
-        el.setAttribute("cy", String(y1 + (y2 - y1) * t));
-      });
-    };
-
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
 
-      {/* ── Map background: state fills + site markers ── */}
       <ComposableMap
         projection="geoMercator"
         projectionConfig={PROJECTION_CONFIG}
@@ -118,17 +87,13 @@ export default function MapEmbed() {
               <g>
                 <circle r={nr} fill="#00FF66" opacity={hub ? 1 : 0.88} />
                 <circle r={rr} fill="none" stroke="#00FF66" strokeWidth={hub ? 0.8 : 0.5} opacity={0.22} />
-                <text
-                  y={-(nr + 5)}
-                  textAnchor="middle"
-                  style={{
-                    fontFamily: "'JetBrains Mono',monospace",
-                    fontSize: hub ? 7.5 : 6.5,
-                    fill: hub ? "#FAFAFA" : "#D0D0D8",
-                    letterSpacing: "0.05em",
-                    fontWeight: hub ? 700 : 400,
-                  }}
-                >
+                <text y={-(nr + 5)} textAnchor="middle" style={{
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: hub ? 7.5 : 6.5,
+                  fill: hub ? "#FAFAFA" : "#D0D0D8",
+                  letterSpacing: "0.05em",
+                  fontWeight: hub ? 700 : 400,
+                }}>
                   {name.toUpperCase()}
                 </text>
               </g>
@@ -137,9 +102,7 @@ export default function MapEmbed() {
         })}
       </ComposableMap>
 
-      {/* ── Mesh overlay: rAF moves circle cx/cy directly, no CSS/SMIL needed ── */}
       <svg
-        ref={svgRef}
         viewBox="0 0 1000 540"
         style={{
           position: "absolute", top: 0, left: 0,
@@ -147,49 +110,37 @@ export default function MapEmbed() {
           pointerEvents: "none", overflow: "visible",
         }}
       >
+        <defs>
+          <style>{`
+            @keyframes net-pulse {
+              0%,100% { opacity: 0.12; }
+              50%      { opacity: 0.70; }
+            }
+            .net-line {
+              animation: net-pulse linear infinite;
+            }
+          `}</style>
+        </defs>
+
         {MESH_PAIRS.map(({ src, dst, idx }) => {
           const [x1, y1] = SITE_PX[src];
           const [x2, y2] = SITE_PX[dst];
           const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-          const durMs  = (backbone ? 2200 : 3400);
-          const dur2Ms = Math.round(durMs * 0.82);
-          const off1   = Math.round((idx * 310) % durMs);
-          const off2   = Math.round((idx * 310 + durMs / 2) % dur2Ms);
+          const dur      = backbone ? 2.2 : 3.8;
+          const delay    = -((idx * 0.37) % dur);
 
           return (
-            <g key={`${src}-${dst}`}>
-              {/* Static guide line */}
-              <line
-                x1={x1} y1={y1} x2={x2} y2={y2}
-                stroke="#00FF66"
-                strokeWidth={backbone ? 0.8 : 0.4}
-                opacity={backbone ? 0.25 : 0.12}
-              />
-
-              {/* Primary packet — rAF moves this via cx/cy */}
-              <circle
-                className="pkt"
-                data-x1={x1} data-y1={y1} data-x2={x2} data-y2={y2}
-                data-dur={durMs} data-off={off1}
-                cx={x1} cy={y1}
-                r={backbone ? 2.5 : 1.8}
-                fill="#00FF66"
-                opacity={backbone ? 0.95 : 0.6}
-              />
-
-              {/* Second packet on backbone links */}
-              {backbone && (
-                <circle
-                  className="pkt"
-                  data-x1={x1} data-y1={y1} data-x2={x2} data-y2={y2}
-                  data-dur={dur2Ms} data-off={off2}
-                  cx={x1} cy={y1}
-                  r={1.8}
-                  fill="#00FF66"
-                  opacity={0.5}
-                />
-              )}
-            </g>
+            <line
+              key={`${src}-${dst}`}
+              className="net-line"
+              x1={x1} y1={y1} x2={x2} y2={y2}
+              stroke="#00FF66"
+              strokeWidth={backbone ? 1.2 : 0.6}
+              style={{
+                animationDuration: `${dur}s`,
+                animationDelay: `${delay.toFixed(2)}s`,
+              }}
+            />
           );
         })}
       </svg>
