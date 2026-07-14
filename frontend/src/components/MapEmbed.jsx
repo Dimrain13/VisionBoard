@@ -1,7 +1,12 @@
 /**
  * MapEmbed — geographic NOC topology map.
- * Animation: CSS opacity pulse on SVG <line> elements via @keyframes.
- * This is the most compatible approach for Pi Chromium --disable-gpu.
+ *
+ * Animation: sequential opacity pulses on evenly-spaced circles simulate
+ * moving packets along each mesh link. Only uses CSS opacity (confirmed
+ * working on Pi --disable-gpu). No stroke-dasharray, no transform, no SMIL.
+ *
+ * Backbone links (Novi/Azure) = more dots, faster speed.
+ * Remote links = fewer dots, slower speed.
  */
 import React from "react";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
@@ -112,13 +117,13 @@ export default function MapEmbed() {
       >
         <defs>
           <style>{`
-            @keyframes net-pulse {
-              0%,100% { opacity: 0.12; }
-              50%      { opacity: 0.70; }
+            @keyframes dot-travel {
+              0%   { opacity: 0;    }
+              8%   { opacity: 0.95; }
+              16%  { opacity: 0;    }
+              100% { opacity: 0;    }
             }
-            .net-line {
-              animation: net-pulse linear infinite;
-            }
+            .dot { animation-name: dot-travel; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
           `}</style>
         </defs>
 
@@ -126,21 +131,42 @@ export default function MapEmbed() {
           const [x1, y1] = SITE_PX[src];
           const [x2, y2] = SITE_PX[dst];
           const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-          const dur      = backbone ? 2.2 : 3.8;
-          const delay    = -((idx * 0.37) % dur);
+          const numDots  = backbone ? 6 : 3;
+          const dur      = backbone ? 1.8 : 3.5;   // seconds for full traversal
+          const r        = backbone ? 2.2 : 1.5;
 
           return (
-            <line
-              key={`${src}-${dst}`}
-              className="net-line"
-              x1={x1} y1={y1} x2={x2} y2={y2}
-              stroke="#00FF66"
-              strokeWidth={backbone ? 1.2 : 0.6}
-              style={{
-                animationDuration: `${dur}s`,
-                animationDelay: `${delay.toFixed(2)}s`,
-              }}
-            />
+            <g key={`${src}-${dst}`}>
+              {/* Static faint guide line */}
+              <line
+                x1={x1} y1={y1} x2={x2} y2={y2}
+                stroke="#00FF66"
+                strokeWidth={backbone ? 0.7 : 0.35}
+                opacity={backbone ? 0.2 : 0.1}
+              />
+
+              {/* Sequentially-pulsing circles — opacity only, no transform */}
+              {Array.from({ length: numDots }, (_, i) => {
+                const t     = (i + 0.5) / numDots;
+                const cx    = x1 + (x2 - x1) * t;
+                const cy    = y1 + (y2 - y1) * t;
+                // Each dot delayed by dur/numDots relative to prev, plus per-link offset
+                const delay = -((dur * i / numDots) + (idx * 0.29) % dur);
+                return (
+                  <circle
+                    key={i}
+                    className="dot"
+                    cx={cx} cy={cy}
+                    r={r}
+                    fill="#00FF66"
+                    style={{
+                      animationDuration:  `${dur}s`,
+                      animationDelay:     `${delay.toFixed(2)}s`,
+                    }}
+                  />
+                );
+              })}
+            </g>
           );
         })}
       </svg>
