@@ -756,11 +756,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task, vendor_task):
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task, vendor_task, wug_task):
         task.cancel()
     if transport:
         transport.close()
-    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task, vendor_task):
+    for task in (email_task, aruba_task, vivantio_task, dd_task, unifi_task, ping_task, vendor_task, wug_task):
         try:
             await task
         except asyncio.CancelledError:

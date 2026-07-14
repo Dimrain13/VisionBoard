@@ -56,7 +56,11 @@ Create a dashboard in Python/React to display important IT information at a glan
 | UniFi Network | ✅ CONFIGURED (LAN only) | noc-readonly@unifi.mimilk.com:8443 |
 | Aruba EdgeConnect | ⚠️ NOT CONFIGURED | Needs aruba_api_url + aruba_api_key |
 | Wazuh SIEM | ⚠️ NOT CONFIGURED | LAN IP 10.202.10.70 |
-| WUG Email Alerts | ⚠️ NOT CONFIGURED | Needs IMAP credentials |
+| WUG REST API | ✅ INTEGRATED | OAuth2 bearer token; polls /api/v1/ every 60s; LAN-only |
+
+### Kiosk Auto-Rotation (FIXED 2026-07-10)
+- Settings page has checkboxes for which tabs rotate in kiosk mode
+- `kiosk_pages` list persisted in `settings.yml`
 
 ### Pi Kiosk — Raspberry Pi Deployment (FIXED 2026-07-10)
 - **Session**: `rpd-labwc` (Wayland, Pi OS Bookworm/Trixie)
@@ -67,9 +71,14 @@ Create a dashboard in Python/React to display important IT information at a glan
 - **White screen root cause**: `--disable-software-rasterizer` combined with `--disable-gpu` removes ALL rendering paths → blank canvas. Fix: remove `--disable-software-rasterizer`.
 - **Working Chromium flags**: `--no-sandbox --disable-gpu --disable-dev-shm-usage --password-store=basic --renderer-process-limit=1`
 
+### Network Map Animation (FIXED 2026-07-10)
+- Uses **CSS opacity only** on static `<circle>` elements — Pi-safe (`--disable-gpu`)
+- Delay formula corrected: dots now sequence src→dst (was reversed/random before)
+- Backbone links (Novi/Azure): 6 dots, 1.8s cycle; Remote links: 3 dots, 3.5s cycle
+
 ### WUG Network Topology
-- New tab: **WUG** — circuit-board style hierarchical topology per location
-- **DEMO DATA ACTIVE** — WUG API not yet connected (backend stub at `/api/wug/topology`)
+- Tab: **WUG** — circuit-board hierarchical topology per location
+- Live WUG API integrated; falls back to demo data when WUG unreachable
 
 ### UniFi Devices Page
 - Auto-detect UniFi OS vs Legacy API, grouped by type, offline sorted to top
@@ -80,12 +89,11 @@ Create a dashboard in Python/React to display important IT information at a glan
 ## Pending / Upcoming Work
 
 ### P1 — Next
-- WUG REST API integration (blocked: user providing credentials)
-- Downdetector client_id + client_secret
+- Downdetector client_id + client_secret (user to provide)
+- Wazuh configuration (needs credentials for 10.202.10.70)
 
 ### P2 — Soon
 - Automated DIA circuit ping check every 60s
-- Wazuh configuration (needs credentials for 10.202.10.70)
 
 ### P3 — Backlog
 - UniFi Protect camera API integration
@@ -98,6 +106,7 @@ Create a dashboard in Python/React to display important IT information at a glan
 - `GET /api/alerts?acknowledged=false` — active alerts
 - `GET /api/vivantio/tickets` — live Vivantio tickets
 - `GET /api/vendor-status` — 21 vendor statuses
-- `GET /api/wug/topology` — WUG topology (stub until API connected)
+- `GET /api/wug/topology` — WUG topology (live; demo data fallback)
+- `GET /api/wug/alerts` — WUG downed device alerts
 - `GET /api/unifi/devices[?demo=true]` — UniFi devices
 - `GET/PUT /api/settings` — read/write settings.yml

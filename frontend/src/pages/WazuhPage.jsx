@@ -153,7 +153,7 @@ export default function WazuhPage() {
         <span className="section-label">HOURS:</span>
         <select className="input" style={{ width: 70, padding: "4px 8px", fontSize: 10 }}
           value={hoursBack} onChange={e => setHoursBack(parseInt(e.target.value))}>
-          {HOURS_OPTS.map(h => <option key={h} value={h}>{h}h</option>)}
+          {HOURS_OPTS.map(h => <option key={h} value={h}>{`${h}h`}</option>)}
         </select>
         <span className="section-label">GROUP:</span>
         <input className="input" style={{ width: 140, padding: "4px 10px", fontSize: 10 }}
