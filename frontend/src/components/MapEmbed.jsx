@@ -57,7 +57,7 @@ const DOT_DEFS = MESH_PAIRS.flatMap(({ src, dst, idx }) => {
   const [x2, y2] = SITE_PX[dst];
   const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
   const numDots  = backbone ? 3 : 2;
-  const speed    = backbone ? 0.50 : 0.25;  // link traversals per second
+  const speed    = backbone ? 0.22 : 0.12;  // link traversals per second (4.5s / 8s)
   const r        = backbone ? 2.4 : 1.6;    // dot radius in SVG user units
 
   return Array.from({ length: numDots }, (_, i) => ({
@@ -110,9 +110,13 @@ export default function MapEmbed() {
       const cH = canvas.height;
       if (!cW || !cH) return;
 
-      // Scale: SVG user units (0–1000 × 0–540) → canvas pixels
-      const sx = cW / VW;
-      const sy = cH / VH;
+      // Match SVG preserveAspectRatio="xMidYMid meet":
+      // scale uniformly by min(W/viewW, H/viewH) then center the unused dimension.
+      // This is identical to how the overlay SVG (viewBox 0 0 1000 540) maps its
+      // coordinates to screen pixels, so dots land exactly on the mesh lines.
+      const scale   = Math.min(cW / VW, cH / VH);
+      const offsetX = (cW - VW * scale) / 2;
+      const offsetY = (cH - VH * scale) / 2;
 
       ctx.clearRect(0, 0, cW, cH);
 
@@ -125,9 +129,11 @@ export default function MapEmbed() {
 
         const t = prog[i];
 
-        // Lerp position along the link (in SVG user units, then scale to canvas)
-        const cx = (d.x1 + (d.x2 - d.x1) * t) * sx;
-        const cy = (d.y1 + (d.y2 - d.y1) * t) * sy;
+        // Interpolate position in SVG user units, then apply letterbox transform
+        const svgX = d.x1 + (d.x2 - d.x1) * t;
+        const svgY = d.y1 + (d.y2 - d.y1) * t;
+        const cx   = svgX * scale + offsetX;
+        const cy   = svgY * scale + offsetY;
 
         // Fade in 0→8% of journey, fully opaque 8→88%, fade out 88→100%
         const alpha = t < 0.08 ? t / 0.08
@@ -137,7 +143,7 @@ export default function MapEmbed() {
         ctx.globalAlpha = alpha;
         ctx.fillStyle   = "#00FF66";
         ctx.beginPath();
-        ctx.arc(cx, cy, d.r * Math.min(sx, sy), 0, Math.PI * 2);
+        ctx.arc(cx, cy, d.r * scale, 0, Math.PI * 2);
         ctx.fill();
       }
 
