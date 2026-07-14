@@ -1,20 +1,24 @@
 /**
  * MapEmbed — geographic NOC topology map.
  *
- * Animation: CSS Motion Path (offset-path + offset-distance).
- * Dots physically travel src → dst along each mesh link.
- * Pure CSS — no rAF, no SMIL, no stroke-dashoffset.
- * offset-path supported in Chromium 97+ (Pi ships Chromium ≥117).
- * Falls back to static dot at line midpoint if motion path unsupported.
+ * Animation strategy: Canvas 2D overlay at 20 fps.
+ * WHY CANVAS, not CSS/SVG animation:
+ *   - offset-path: doesn't work on Pi --disable-gpu (dots appear at wrong positions)
+ *   - CSS opacity on static circles: only blinks, no movement
+ *   - rAF + SVG attribute updates: black-screens Pi (DOM re-layout on every element)
+ *   - Canvas 2D: just writes pixels — no DOM updates, no style/layout triggers.
+ *     Pi 4 CPU handles 90 ctx.arc() calls at 20fps with ease.
+ *
+ * The canvas layer is sized to the parent container. Dot positions are computed
+ * in SVG user-unit space (viewBox 0 0 1000 540) then scaled to canvas pixels.
  */
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
 
 const GEO_URL           = "/us-states-10m.json";
 const PROJECTION_CONFIG = { scale: 4500, center: [-84.8, 42.4] };
-
-const PRIMARY_STATES = new Set(["26", "39", "18", "17"]);
-const CONTEXT_STATES = new Set(["55", "21", "42", "54"]);
+const PRIMARY_STATES    = new Set(["26", "39", "18", "17"]);
+const CONTEXT_STATES    = new Set(["55", "21", "42", "54"]);
 
 const SITES = {
   "Novi":             { coords: [-83.476, 42.481], hub: true  },
@@ -34,23 +38,124 @@ for (let i = 0; i < SITE_KEYS.length; i++)
   for (let j = i + 1; j < SITE_KEYS.length; j++)
     MESH_PAIRS.push({ src: SITE_KEYS[i], dst: SITE_KEYS[j], idx: i * SITE_KEYS.length + j });
 
-const W = 1000, H = 540;
+const VW = 1000, VH = 540;
 function mercY(lat) { return Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)); }
 const _CY = mercY(42.4);
-function px(lng, lat) {
+function svgPx(lng, lat) {
   return [
-    4500 * ((lng + 84.8) * Math.PI / 180) + W / 2,
-    -4500 * (mercY(lat) - _CY) + H / 2,
+    4500 * ((lng + 84.8) * Math.PI / 180) + VW / 2,
+    -4500 * (mercY(lat) - _CY) + VH / 2,
   ];
 }
 const SITE_PX = Object.fromEntries(
-  Object.entries(SITES).map(([k, v]) => [k, px(...v.coords)])
+  Object.entries(SITES).map(([k, v]) => [k, svgPx(...v.coords)])
 );
 
+// Build dot descriptors once at module load — constant for the lifetime of the app.
+const DOT_DEFS = MESH_PAIRS.flatMap(({ src, dst, idx }) => {
+  const [x1, y1] = SITE_PX[src];
+  const [x2, y2] = SITE_PX[dst];
+  const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
+  const numDots  = backbone ? 3 : 2;
+  const speed    = backbone ? 0.50 : 0.25;  // link traversals per second
+  const r        = backbone ? 2.4 : 1.6;    // dot radius in SVG user units
+
+  return Array.from({ length: numDots }, (_, i) => ({
+    x1, y1, x2, y2, speed, r,
+    // Stagger starting positions so dots are evenly spaced at page load
+    progress: ((i / numDots) + (idx * 0.11)) % 1,
+  }));
+});
+
 export default function MapEmbed() {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Match canvas pixel dimensions to its CSS display size
+    const syncSize = () => {
+      const p = canvas.parentElement;
+      if (!p) return;
+      canvas.width  = p.clientWidth;
+      canvas.height = p.clientHeight;
+    };
+    syncSize();
+    window.addEventListener("resize", syncSize);
+
+    const ctx  = canvas.getContext("2d");
+    // Mutable progress state — one float per dot, mutated each frame
+    const prog = DOT_DEFS.map(d => d.progress);
+
+    let animId = null;
+    let lastTs = null;
+    const TARGET_FPS = 20;
+    const FRAME_MS   = 1000 / TARGET_FPS;
+    let   accumulated = 0;
+
+    const tick = (ts) => {
+      animId = requestAnimationFrame(tick);
+
+      if (lastTs === null) { lastTs = ts; return; }
+      accumulated += Math.min(ts - lastTs, 50); // clamp: tab hidden / large gap
+      lastTs = ts;
+
+      if (accumulated < FRAME_MS) return; // wait until next frame interval
+
+      const dt = accumulated / 1000; // seconds elapsed this batch
+      accumulated = 0;
+
+      const cW = canvas.width;
+      const cH = canvas.height;
+      if (!cW || !cH) return;
+
+      // Scale: SVG user units (0–1000 × 0–540) → canvas pixels
+      const sx = cW / VW;
+      const sy = cH / VH;
+
+      ctx.clearRect(0, 0, cW, cH);
+
+      for (let i = 0; i < DOT_DEFS.length; i++) {
+        const d = DOT_DEFS[i];
+
+        // Advance progress
+        prog[i] += d.speed * dt;
+        if (prog[i] >= 1) prog[i] -= 1;
+
+        const t = prog[i];
+
+        // Lerp position along the link (in SVG user units, then scale to canvas)
+        const cx = (d.x1 + (d.x2 - d.x1) * t) * sx;
+        const cy = (d.y1 + (d.y2 - d.y1) * t) * sy;
+
+        // Fade in 0→8% of journey, fully opaque 8→88%, fade out 88→100%
+        const alpha = t < 0.08 ? t / 0.08
+                    : t > 0.88 ? (1 - t) / 0.12
+                    : 1.0;
+
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle   = "#00FF66";
+        ctx.beginPath();
+        ctx.arc(cx, cy, d.r * Math.min(sx, sy), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = 1;
+    };
+
+    animId = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", syncSize);
+    };
+  }, []); // mount once — DOT_DEFS is module-level constant
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
 
+      {/* Base map */}
       <ComposableMap
         projection="geoMercator"
         projectionConfig={PROJECTION_CONFIG}
@@ -106,92 +211,40 @@ export default function MapEmbed() {
         })}
       </ComposableMap>
 
-      {/* Overlay SVG — animated dots travel along mesh links */}
+      {/* Static mesh guide lines — zero animation cost */}
       <svg
         viewBox="0 0 1000 540"
         style={{
           position: "absolute", top: 0, left: 0,
           width: "100%", height: "100%",
-          pointerEvents: "none", overflow: "visible",
+          pointerEvents: "none",
         }}
       >
-        <defs>
-          <style>{`
-            /*
-             * CSS Motion Path animation — dots travel along offset-path.
-             * offset-distance: 0% = source node, 100% = destination node.
-             * Fade in quickly, stay visible for the journey, fade out on arrival.
-             */
-            @keyframes travel {
-              0%   { offset-distance: 0%;   opacity: 0;   }
-              6%   { opacity: 1;            }
-              88%  { opacity: 1;            }
-              100% { offset-distance: 100%; opacity: 0;   }
-            }
-            .mover {
-              animation-name: travel;
-              animation-timing-function: linear;
-              animation-iteration-count: infinite;
-            }
-          `}</style>
-        </defs>
-
-        {MESH_PAIRS.map(({ src, dst, idx }) => {
+        {MESH_PAIRS.map(({ src, dst }) => {
           const [x1, y1] = SITE_PX[src];
           const [x2, y2] = SITE_PX[dst];
           const backbone = src === "Novi" || dst === "Novi" || src === "Azure" || dst === "Azure";
-
-          // Backbone (hub/cloud) links: faster, more dots
-          // Remote links: slower, fewer dots
-          const numDots = backbone ? 3 : 2;
-          const dur     = backbone ? 1.8 : 3.5;
-          const r       = backbone ? 2.4 : 1.6;
-
-          // Path string in SVG user-unit coordinates
-          const pathD = `M ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)}`;
-
           return (
-            <g key={`${src}-${dst}`}>
-              {/* Faint static guide line */}
-              <line
-                x1={x1} y1={y1} x2={x2} y2={y2}
-                stroke="#00FF66"
-                strokeWidth={backbone ? 0.7 : 0.35}
-                opacity={backbone ? 0.18 : 0.09}
-              />
-
-              {/*
-               * Moving dots via CSS Motion Path.
-               * - offset-path places each dot at the correct SVG coordinates.
-               * - Negative animation-delay evenly distributes dots along the
-               *   path at page load (already "in transit").
-               * - Per-link phase offset (idx * 0.23) staggers different links
-               *   so they don't all fire simultaneously.
-               * - cx/cy set to line midpoint as a graceful fallback if the
-               *   browser doesn't support offset-path.
-               */}
-              {Array.from({ length: numDots }, (_, i) => {
-                const delay = -((i * dur) / numDots) + ((idx * 0.23) % dur);
-                return (
-                  <circle
-                    key={i}
-                    className="mover"
-                    cx={(x1 + x2) / 2}
-                    cy={(y1 + y2) / 2}
-                    r={r}
-                    fill="#00FF66"
-                    style={{
-                      offsetPath:        `path('${pathD}')`,
-                      animationDuration:  `${dur}s`,
-                      animationDelay:     `${delay.toFixed(2)}s`,
-                    }}
-                  />
-                );
-              })}
-            </g>
+            <line
+              key={`${src}-${dst}`}
+              x1={x1} y1={y1} x2={x2} y2={y2}
+              stroke="#00FF66"
+              strokeWidth={backbone ? 0.7 : 0.35}
+              opacity={backbone ? 0.18 : 0.09}
+            />
           );
         })}
       </svg>
+
+      {/* Canvas overlay — dots drawn at exact line positions, 20 fps, no DOM updates */}
+      <canvas
+        ref={canvasRef}
+        style={{
+          position: "absolute", top: 0, left: 0,
+          width: "100%", height: "100%",
+          pointerEvents: "none",
+        }}
+      />
 
     </div>
   );
