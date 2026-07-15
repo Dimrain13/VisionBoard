@@ -32,7 +32,7 @@ Create a dashboard in Python/React to display important IT information at a glan
 - **circuits.yml** — DIA circuit inventory. Edit directly. Persists across restarts.
 - **In-memory** — alerts (from WUG email), Vivantio cache, UniFi events ring buffer. Resets on restart.
 
-## What's Been Implemented
+## What's Been Implemented (Updated 2026-07-15)
 
 ### Core Infrastructure
 - FastAPI backend, React/Tailwind frontend, Cyberpunk NOC aesthetic
@@ -83,10 +83,27 @@ Create a dashboard in Python/React to display important IT information at a glan
 ### UniFi Devices Page
 - Auto-detect UniFi OS vs Legacy API, grouped by type, offline sorted to top
 
-### Alerts Page
-- Unacknowledged + Critical/Warning only by default, acknowledge removes from view
+### WUG Page (WUGDevices.jsx) — REDESIGNED 2026-07-15
+- **Grid layout**: 4×2 grid of site cards (handles 8 locations)
+- **Per-site scatter plot**: All devices shown as concentric-ring dots (scales 3 to 100+ per site)
+  - Root device (GW/FW) placed at center with type label
+  - All other devices fill rings outward; offline first for visibility
+  - Connection lines for parent→child relationships (faint; red when offline)
+  - Pulsing red ring for offline devices (CSS opacity, Pi-safe)
+- **Demo data**: Realistic device counts (14–68 per site; genDevices helper)
+- **Live data**: Uses `/api/wug/topology`; parent_id from real WUG honored if provided
 
-## Pending / Upcoming Work
+### UniFi Page (UniFiDevices.jsx) — Updated 2026-07-15
+- Added `firewall` device type (HP Aruba support)
+- Axios timeout 8s (was hanging 35s for unreachable LAN controller)
+- inferParents updated: firewall > gateway > switch > first device as root
+- Cameras distributed across switches (same as APs)
+
+### Map Animation
+- Canvas 2D (not CSS Motion Path or DOM updates) — Pi `--disable-gpu` safe
+- Dots animate along SVG path coordinates at 15fps
+
+
 
 ### P1 — Next
 - Downdetector client_id + client_secret (user to provide)
