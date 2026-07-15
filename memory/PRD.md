@@ -93,19 +93,17 @@ Create a dashboard in Python/React to display important IT information at a glan
 - **Demo data**: Realistic device counts (14–68 per site; genDevices helper)
 - **Live data**: Uses `/api/wug/topology`; parent_id from real WUG honored if provided
 
-### UniFi Page (UniFiDevices.jsx) — REDESIGNED 2026-07-16
+### UniFi Page (UniFiDevices.jsx) — REDESIGNED 2026-07-16 (CSS layout 2026-07-15)
 - **Location sub-tabs**: [ALL SITES] + one tab per site (8 tabs for 8 locations)
-- **Full topology tree** (left-to-right): GW → Core SW → IDF SW → AP/CAM
-  - Every device is a labeled box with device name, IP, and type pill
-  - Elbow connectors (right-angle SVG paths) show actual uplink relationships
-  - Supports arbitrary tree depth for multi-level IDF switch topologies
+- **CSS hierarchy layout** (no SVG math): GW/FW card (large, centered) → Switch cards (flex row) → AP/CAM endpoint chips (flex-wrap under each switch)
   - Color-coded by type: purple=GW, green=SW, cyan=AP, amber=CAM, red=offline
-- **Auto-cycle** (kiosk mode): cycles ALL SITES → site[0] → site[1] → ... every 8s
-- **ALL SITES tab**: 4-column grid of compact site overview cards (GW+SW+dot endpoints)
-- **Layout algorithm**: Reingold-Tilford-style leaf-row assignment on 1900×900 virtual canvas
-  - Node height dynamically computed from leaf count (fits Pi 1920×1080 screen)
-  - Per-site SVG scales uniformly via viewBox+preserveAspectRatio
-- **Demo fallback**: DEMO_SITES array (8 sites, 116 devices, 2 offline) used when LAN controller unreachable
+  - Offline devices highlighted in red with glow
+  - Tooltips on hover for full device name + IP + status
+- **Kiosk auto-cycle**: ALL SITES → site[0] → ... → site[n] → ALL every 8s
+  - Holds main kiosk rotation timer via `window.__kioskHoldPage(true/false)` while cycling site tabs
+  - Layout.jsx registers `window.__kioskHoldPage` on mount; resets tick on release
+- **ALL SITES tab**: 4-column grid of compact SVG mini-topology cards
+- **Demo fallback**: DEMO_SITES (8 sites, 116 devices, 2 offline) when LAN controller unreachable
 - WUG debug endpoint now tests all 4 known WUG token paths (including /WhatsUp/ and /nmapi/)
 
 ### Tickets Page — Per-Location Incident Board (2026-07-15)

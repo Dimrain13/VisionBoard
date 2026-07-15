@@ -1,31 +1,23 @@
 /**
- * UniFiDevices — Per-site network topology tree with location sub-tabs.
+ * UniFiDevices — CSS-based hierarchical device view per site.
  *
- * Per-site view: Top-down hierarchical tree
- *        [  GW / FW  ]
- *       /      |      \
- *   [SW-1]  [SW-2]  [SW-3]
- *    / | \    / \      |
- *  AP AP AP  AP AP    CAM
+ *  GW/FW  (large card, centered)
+ *    |
+ *  SW-1    SW-2    SW-3   (switch cards in a flex row)
+ *  ├─AP    ├─AP    ├─AP
+ *  ├─AP    └─CAM   └─AP
+ *  └─CAM
  *
- * Every device = named labeled box. Lines show actual uplink connections.
- * Supports arbitrary tree depth (GW → Core SW → IDF SW → AP, etc.)
- * Sub-tabs: [ALL SITES] + one tab per location. Auto-cycles every 8s (kiosk).
- * Holds main page kiosk timer while cycling site tabs.
- * Pi-safe: static SVG only, no canvas, no transform animations.
+ * No SVG math. Pure CSS flex. Pi-safe.
+ * Sub-tabs: [ALL SITES] + one per location. Auto-cycles every 8s (kiosk).
+ * Holds main kiosk timer while cycling site tabs via window.__kioskHoldPage.
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { RefreshCw } from "lucide-react";
 
 const API      = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const CYCLE_MS = 8000;   // ms per site tab in kiosk auto-cycle
-
-// Virtual canvas constants — top-down layout
-const LEAF_W  = 90;    // virtual horizontal units per leaf column
-const BAND_H  = 290;   // virtual vertical units per depth level
-const MAX_GW_W = 240;  // cap on gateway node width
-const MAX_SW_W = 190;  // cap on switch node width
+const CYCLE_MS = 8000; // ms per site tab in kiosk auto-cycle
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Colours / labels
@@ -51,240 +43,190 @@ const TYPE_LABEL = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tree building — supports arbitrary depth via uplink_mac
+// Build 2-level hierarchy: root + switchGroups + orphans
 // ─────────────────────────────────────────────────────────────────────────────
-function buildTree(devices) {
-  if (!devices?.length) return null;
+function buildHierarchy(devices) {
+  if (!devices?.length) return { root: null, switchGroups: [], orphans: [] };
 
-  const byMac      = {};
+  const byMac     = {};
   const childrenOf = {};
-  const hasParent  = new Set();
+  const hasParent = new Set();
 
   devices.forEach(d => { if (d.mac) byMac[d.mac] = d; });
-
   devices.forEach(d => {
-    const parent = d.uplink_mac && byMac[d.uplink_mac];
-    if (parent && parent.id !== d.id) {
-      if (!childrenOf[parent.id]) childrenOf[parent.id] = [];
-      childrenOf[parent.id].push(d);
+    const p = d.uplink_mac && byMac[d.uplink_mac];
+    if (p && p.id !== d.id) {
+      if (!childrenOf[p.id]) childrenOf[p.id] = [];
+      childrenOf[p.id].push(d);
       hasParent.add(d.id);
     }
   });
 
-  // Fallback when no uplink_mac data — group by type
-  if (hasParent.size === 0) {
-    const isInfra = d => ["gateway","firewall","switch","poe_switch"].includes(d.type);
-    const infra   = devices.filter(isInfra);
-    const leafs   = devices.filter(d => !isInfra(d));
-    const root    = infra.find(d => ["gateway","firewall"].includes(d.type)) || infra[0] || devices[0];
-    const sws     = infra.filter(d => d.id !== root.id);
-
-    if (sws.length) {
-      sws.forEach(sw => {
-        if (!childrenOf[root.id]) childrenOf[root.id] = [];
-        childrenOf[root.id].push(sw);
-        hasParent.add(sw.id);
-      });
-      leafs.forEach((ep, i) => {
-        const sw = sws[i % sws.length];
-        if (!childrenOf[sw.id]) childrenOf[sw.id] = [];
-        childrenOf[sw.id].push(ep);
-        hasParent.add(ep.id);
-      });
-    } else {
-      leafs.forEach(ep => {
-        if (!childrenOf[root.id]) childrenOf[root.id] = [];
-        childrenOf[root.id].push(ep);
-        hasParent.add(ep.id);
-      });
-    }
-  }
+  const isInfra = d => ["gateway","firewall","switch","poe_switch"].includes(d.type);
 
   const roots = devices.filter(d => !hasParent.has(d.id));
   const root  = roots.find(r => ["gateway","firewall"].includes(r.type))
-             || roots.find(r => ["switch","poe_switch"].includes(r.type))
+             || roots.find(r => isInfra(r))
              || roots[0] || devices[0];
+  if (!root) return { root: null, switchGroups: [], orphans: [] };
 
-  function makeNode(device, depth) {
-    return {
-      device,
-      depth,
-      children: (childrenOf[device.id] || []).map(c => makeNode(c, depth + 1)),
-    };
+  // Flatten all descendants under a node (recursively)
+  function allDescendants(nodeId) {
+    const kids = childrenOf[nodeId] || [];
+    const out  = [];
+    kids.forEach(k => { out.push(k); out.push(...allDescendants(k.id)); });
+    return out;
   }
-  return makeNode(root, 0);
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Layout: left-to-right tree on VW×VH virtual canvas
-//   Each leaf gets one "row slot". Internal nodes center on their subtree.
-// ─────────────────────────────────────────────────────────────────────────────
-function getDepth(n) {
-  return n.children.length ? 1 + Math.max(...n.children.map(getDepth)) : 0;
-}
-function countLeaves(n) {
-  return n.children.length ? n.children.reduce((s, c) => s + countLeaves(c), 0) : 1;
-}
-
-function assignRows(node, ctr) {
-  if (!node.children.length) { node._row = ctr.v++; return; }
-  node.children.forEach(c => assignRows(c, ctr));
-  const first = (function fl(n) { return n.children.length ? fl(n.children[0]) : n._row; })(node);
-  const last  = (function ll(n) { return n.children.length ? ll(n.children[n.children.length - 1]) : n._row; })(node);
-  node._row   = (first + last) / 2;
-}
-
-// Returns node height for a given tree level / leaf status
-function nodeHFor(level, isLeaf) {
-  if (isLeaf)      return Math.min(74, Math.max(34, BAND_H * 0.30));
-  if (level === 0) return Math.min(58, BAND_H * 0.24);
-  return               Math.min(50, BAND_H * 0.21);
-}
-
-function computeLayout(tree) {
-  if (!tree) return { nodes: [], edges: [], vw: 1900, vh: 870 };
-
-  assignRows(tree, { v: 0 });
-
-  const levels = getDepth(tree) + 1;
-  const leaves = countLeaves(tree);
-
-  // Canvas: wide enough for leaf columns, tall enough for depth levels
-  const vw   = Math.max(1900, leaves * LEAF_W);
-  const vh   = levels * BAND_H;
-  const colW = vw / leaves;
-
-  const nodes = [];
-  const edges = [];
-
-  function collect(node, level) {
-    const cx     = node._row * colW + colW / 2;   // horizontal centre
-    const cy     = level * BAND_H + BAND_H / 2;    // vertical centre
-    const isLeaf = !node.children.length;
-    const nh     = nodeHFor(level, isLeaf);
-
-    let nw;
-    if (isLeaf) {
-      nw = Math.max(48, colW - 4);
-    } else if (level === 0) {
-      nw = Math.min(MAX_GW_W, countLeaves(node) * colW - 20);
-    } else {
-      nw = Math.min(MAX_SW_W, countLeaves(node) * colW - 12);
+  // Fallback: no uplink data — group by type
+  if (hasParent.size === 0) {
+    const sws = devices.filter(d => isInfra(d) && d.id !== root.id);
+    const eps = devices.filter(d => !isInfra(d));
+    if (sws.length) {
+      const groups = sws.map(sw => ({ sw, endpoints: [] }));
+      eps.forEach((ep, i) => groups[i % groups.length].endpoints.push(ep));
+      return { root, switchGroups: groups, orphans: [] };
     }
-
-    nodes.push({ ...node, x: cx - nw / 2, y: cy - nh / 2, nodeW: nw, nodeH: nh });
-
-    node.children.forEach(child => {
-      const childCx     = child._row * colW + colW / 2;
-      const childIsLeaf = !child.children.length;
-      const childNH     = nodeHFor(level + 1, childIsLeaf);
-      const childCy     = (level + 1) * BAND_H + BAND_H / 2;
-      edges.push({
-        x1: cx,      y1: cy + nh / 2,
-        x2: childCx, y2: childCy - childNH / 2,
-        offline: child.device.status === "offline",
-      });
-      collect(child, level + 1);
-    });
+    return { root, switchGroups: [], orphans: eps };
   }
-  collect(tree, 0);
 
-  return { nodes, edges, vw, vh };
+  const switchGroups = [];
+  const orphans      = [];
+  (childrenOf[root.id] || []).forEach(child => {
+    if (isInfra(child)) {
+      switchGroups.push({ sw: child, endpoints: allDescendants(child.id) });
+    } else {
+      orphans.push(child);
+    }
+  });
+  return { root, switchGroups, orphans };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SVG — labeled node box
+// DeviceCard — GW/FW (size="large") or Switch (size="medium")
 // ─────────────────────────────────────────────────────────────────────────────
-function NodeBox({ x, y, nodeW, nodeH, device }) {
-  const col   = tc(device.type);
-  const isOff = device.status === "offline";
-  const label = TYPE_LABEL[device.type] || "DEV";
+function DeviceCard({ device, size = "medium" }) {
+  const col     = tc(device.type);
+  const isOff   = device.status === "offline";
+  const label   = TYPE_LABEL[device.type] || "DEV";
+  const isLarge = size === "large";
 
-  // Narrow nodes (leaf AP/CAM) use a vertical card layout (pill on top, name below).
-  // Wide nodes (GW, SW) use a horizontal layout (pill on left, name on right).
-  if (nodeW < 120) {
-    const pillH  = Math.max(22, nodeH * 0.40);
-    const nameFs = Math.max(6, Math.min(9, nodeW / 9));
-    const ipFs   = Math.max(5, nameFs - 1.5);
-    const ip2oct = (device.ip || "").split(".").slice(-2).join(".");
-    return (
-      <g>
-        <rect x={x} y={y} width={nodeW} height={nodeH} rx={2}
-          fill="#05050E" stroke={isOff ? "#FF2A2A88" : `${col}40`} strokeWidth={1} />
-        <rect x={x + 3} y={y + 3} width={nodeW - 6} height={pillH - 2} rx={1}
-          fill={isOff ? "#FF2A2A18" : `${col}20`} />
-        <text x={x + nodeW / 2} y={y + pillH * 0.62} textAnchor="middle"
-          fontSize={Math.min(11, pillH * 0.54)} fill={isOff ? "#FF6666" : col}
-          fontFamily="'JetBrains Mono',monospace" fontWeight={700}>{label}</text>
-        <text x={x + nodeW / 2} y={y + pillH + nameFs + 3} textAnchor="middle"
-          fontSize={nameFs} fill={isOff ? "#FF8080" : "#B0B0C8"}
-          fontFamily="'JetBrains Mono',monospace" fontWeight={600}>
-          {(device.name || "").slice(0, 10)}
-        </text>
-        <text x={x + nodeW / 2} y={y + pillH + nameFs * 2 + 7} textAnchor="middle"
-          fontSize={ipFs} fill={isOff ? "#FF4444" : "#243C54"}
-          fontFamily="'JetBrains Mono',monospace">{ip2oct}</text>
-        <circle cx={x + nodeW - 4} cy={y + 5} r={3}
-          fill={isOff ? "#FF2A2A" : col} opacity={0.9} />
-      </g>
-    );
-  }
-
-  // Horizontal layout for wide infrastructure nodes (GW, SW)
-  const fs1   = Math.max(8, Math.min(15, nodeH * 0.33));
-  const fs2   = Math.max(6.5, Math.min(11, nodeH * 0.23));
-  const pillW = Math.max(24, nodeH * 0.70);
-  const ledR  = Math.max(3, nodeH * 0.09);
   return (
-    <g>
-      <rect x={x} y={y} width={nodeW} height={nodeH} rx={2}
-        fill="#05050E" stroke={isOff ? "#FF2A2A88" : `${col}40`} strokeWidth={isOff ? 1.5 : 1} />
-      <rect x={x} y={y} width={6} height={nodeH} rx={1}
-        fill={isOff ? "#FF2A2A" : col} opacity={0.9} />
-      <rect x={x + 9} y={y + 4} width={pillW} height={nodeH - 8} rx={1}
-        fill={isOff ? "#FF2A2A14" : `${col}18`} />
-      <text x={x + 9 + pillW / 2} y={y + nodeH / 2 + fs2 * 0.38} fontSize={fs2}
-        textAnchor="middle" fill={isOff ? "#FF6666" : col}
-        fontFamily="'JetBrains Mono',monospace" fontWeight={700}>{label}</text>
-      <text x={x + 14 + pillW} y={y + nodeH / 2 - 1} fontSize={fs1}
-        fill={isOff ? "#FF8080" : "#C8C8D8"}
-        fontFamily="'JetBrains Mono',monospace" fontWeight={600}>
-        {(device.name || "").slice(0, 22)}
-      </text>
-      <text x={x + 14 + pillW} y={y + nodeH / 2 + fs2 + 3} fontSize={fs2}
-        fill={isOff ? "#FF4444" : "#2A4A6A"} fontFamily="'JetBrains Mono',monospace">
-        {(device.ip || "").slice(0, 18)}
-      </text>
-      <circle cx={x + nodeW - 10} cy={y + nodeH / 2} r={ledR}
-        fill={isOff ? "#FF2A2A" : col} opacity={0.9} />
-    </g>
+    <div style={{
+      display:    "flex",
+      alignItems: "center",
+      gap:        isLarge ? 12 : 8,
+      background: "#05050E",
+      border:     `1px solid ${isOff ? "#FF2A2A44" : `${col}28`}`,
+      borderLeft: `3px solid ${isOff ? "#FF2A2A" : col}`,
+      padding:    isLarge ? "10px 20px" : "7px 12px",
+      minWidth:   isLarge ? 280 : 150,
+      maxWidth:   isLarge ? 560 : 260,
+    }}>
+      <div style={{
+        background:    isOff ? "#FF2A2A20" : `${col}1A`,
+        border:        `1px solid ${isOff ? "#FF2A2A44" : `${col}44`}`,
+        color:         isOff ? "#FF6666" : col,
+        fontFamily:    "'JetBrains Mono',monospace",
+        fontSize:      isLarge ? 11 : 9,
+        fontWeight:    700,
+        padding:       isLarge ? "4px 10px" : "2px 6px",
+        letterSpacing: "0.1em",
+        flexShrink:    0,
+      }}>
+        {label}
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{
+          fontFamily:    "'JetBrains Mono',monospace",
+          fontSize:      isLarge ? 13 : 11,
+          fontWeight:    600,
+          color:         isOff ? "#FF8080" : "#C8C8D8",
+          overflow:      "hidden",
+          textOverflow:  "ellipsis",
+          whiteSpace:    "nowrap",
+        }}>
+          {device.name || device.id}
+        </div>
+        {device.ip && (
+          <div style={{
+            fontFamily: "'JetBrains Mono',monospace",
+            fontSize:   isLarge ? 9 : 7.5,
+            color:      isOff ? "#FF4444" : "#28385A",
+            marginTop:  1,
+          }}>
+            {device.ip}
+          </div>
+        )}
+      </div>
+      <div style={{
+        width:       isLarge ? 8 : 6,
+        height:      isLarge ? 8 : 6,
+        borderRadius:"50%",
+        background:  isOff ? "#FF2A2A" : col,
+        flexShrink:  0,
+        boxShadow:   isOff ? "0 0 6px #FF2A2A80" : `0 0 5px ${col}80`,
+      }} />
+    </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SVG — elbow connector (parent right edge → child left edge)
+// EndpointChip — AP / CAM / sub-switch / DEV
 // ─────────────────────────────────────────────────────────────────────────────
-// Vertical elbow: parent bottom-centre → mid-y → child x → child top-centre
-function ElbowEdge({ x1, y1, x2, y2, offline }) {
-  const mid = (y1 + y2) / 2;
+function EndpointChip({ device }) {
+  const col    = tc(device.type);
+  const isOff  = device.status === "offline";
+  const label  = TYPE_LABEL[device.type] || "DEV";
+  const isSubSw= ["switch","poe_switch"].includes(device.type);
+
   return (
-    <path
-      d={`M ${x1} ${y1} V ${mid} H ${x2} V ${y2}`}
-      fill="none"
-      stroke={offline ? "#FF2A2A77" : "#1A4870"}
-      strokeWidth={offline ? 1.5 : 1.2}
-    />
+    <div
+      title={`${device.name || ""} | ${device.ip || ""} | ${device.status}`}
+      style={{
+        display:    "flex",
+        alignItems: "center",
+        gap:        5,
+        background: isSubSw ? "#080814" : "#040408",
+        border:     `1px solid ${isOff ? "#FF2A2A33" : `${col}22`}`,
+        padding:    "3px 8px",
+        maxWidth:   150,
+      }}
+    >
+      <div style={{
+        width:        5,
+        height:       5,
+        borderRadius: isSubSw ? 1 : "50%",
+        background:   isOff ? "#FF2A2A" : col,
+        flexShrink:   0,
+        opacity:      isOff ? 1 : 0.85,
+      }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{
+          fontFamily:   "'JetBrains Mono',monospace",
+          fontSize:     8.5,
+          color:        isOff ? "#FF6666" : "#8090A8",
+          overflow:     "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace:   "nowrap",
+        }}>
+          {device.name ? device.name.slice(0, 14) : label}
+        </div>
+        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#1C2A3A" }}>
+          {label}{device.ip ? ` · ${device.ip.split(".").slice(-2).join(".")}` : ""}
+        </div>
+      </div>
+    </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Full-screen topology for one site (used by per-site tabs)
+// Per-site CSS hierarchy view (replaces SVG tree)
 // ─────────────────────────────────────────────────────────────────────────────
 function SiteTopologyView({ siteId, name, devices }) {
-  const tree    = buildTree(devices);
-  const layout  = computeLayout(tree);
-  const total   = devices.length;
-  const offline = devices.filter(d => d.status === "offline").length;
+  const { root, switchGroups, orphans } = buildHierarchy(devices);
+  const total    = devices.length;
+  const offline  = devices.filter(d => d.status === "offline").length;
   const hasIssue = offline > 0;
 
   return (
@@ -294,14 +236,20 @@ function SiteTopologyView({ siteId, name, devices }) {
     >
       {/* Site sub-header */}
       <div style={{
-        padding: "5px 14px", flexShrink: 0,
-        background: hasIssue ? "#080404" : "#040410",
+        padding:      "5px 14px",
+        flexShrink:   0,
+        background:   hasIssue ? "#080404" : "#040410",
         borderBottom: `1px solid ${hasIssue ? "#FF2A2A22" : "#0C0C1E"}`,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
+        display:      "flex",
+        alignItems:   "center",
+        justifyContent: "space-between",
       }}>
         <span style={{
-          fontFamily: "'JetBrains Mono',monospace", fontSize: 12, fontWeight: 700,
-          color: hasIssue ? "#FF8080" : "#7080A0", letterSpacing: "0.2em",
+          fontFamily:    "'JetBrains Mono',monospace",
+          fontSize:      12,
+          fontWeight:    700,
+          color:         hasIssue ? "#FF8080" : "#7080A0",
+          letterSpacing: "0.2em",
         }}>
           {(name || siteId).toUpperCase()}
         </span>
@@ -319,18 +267,108 @@ function SiteTopologyView({ siteId, name, devices }) {
         </div>
       </div>
 
-      {/* Topology SVG */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "4px 2px" }}>
-        <svg
-          viewBox={`0 0 ${layout.vw} ${layout.vh}`}
-          preserveAspectRatio="xMidYMid meet"
-          style={{ width: "100%", height: "100%", display: "block" }}
-        >
-          {/* Edges first — behind nodes */}
-          {layout.edges.map((e, i) => <ElbowEdge key={i} {...e} />)}
-          {/* Labeled node boxes */}
-          {layout.nodes.map((n, i) => <NodeBox key={n.device?.id || i} {...n} />)}
-        </svg>
+      {/* Hierarchy */}
+      <div style={{
+        flex:           1,
+        minHeight:      0,
+        overflowY:      "auto",
+        padding:        "16px 16px 12px",
+        display:        "flex",
+        flexDirection:  "column",
+        alignItems:     "center",
+        gap:            0,
+      }}>
+        {/* Root GW/FW */}
+        {root ? (
+          <DeviceCard device={root} size="large" />
+        ) : (
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#3A3A50" }}>
+            NO ROOT DEVICE
+          </div>
+        )}
+
+        {/* Connector root → switches */}
+        {(switchGroups.length > 0 || orphans.length > 0) && (
+          <div style={{ width: 1, height: 22, background: "#1A3050", flexShrink: 0 }} />
+        )}
+
+        {/* Horizontal line across switch tops */}
+        {switchGroups.length > 1 && (
+          <div style={{ width: "80%", maxWidth: 900, height: 1, background: "#1A3050", flexShrink: 0, marginBottom: 0 }} />
+        )}
+
+        {/* Switch columns */}
+        {switchGroups.length > 0 && (
+          <div style={{
+            display:        "flex",
+            flexWrap:       "wrap",
+            justifyContent: "center",
+            gap:            16,
+            width:          "100%",
+            paddingTop:     switchGroups.length > 1 ? 0 : 0,
+          }}>
+            {switchGroups.map(({ sw, endpoints }) => (
+              <div key={sw.id} style={{
+                display:       "flex",
+                flexDirection: "column",
+                alignItems:    "center",
+                gap:           0,
+              }}>
+                {/* Connector tick from horizontal line */}
+                {switchGroups.length > 1 && (
+                  <div style={{ width: 1, height: 14, background: "#1A3050", flexShrink: 0 }} />
+                )}
+
+                <DeviceCard device={sw} size="medium" />
+
+                {endpoints.length > 0 && (
+                  <div style={{ width: 1, height: 12, background: "#1A3050", flexShrink: 0 }} />
+                )}
+
+                {endpoints.length > 0 && (
+                  <div style={{
+                    display:        "flex",
+                    flexWrap:       "wrap",
+                    justifyContent: "center",
+                    gap:            4,
+                    maxWidth:       360,
+                    padding:        "6px 8px",
+                    background:     "#030308",
+                    border:         "1px solid #0C0C18",
+                  }}>
+                    {endpoints.map((ep, ei) => (
+                      <EndpointChip key={ep.id || ei} device={ep} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Orphan endpoints — directly on GW, no switch parent */}
+        {orphans.length > 0 && (
+          <div style={{
+            display:        "flex",
+            flexWrap:       "wrap",
+            justifyContent: "center",
+            gap:            4,
+            marginTop:      switchGroups.length > 0 ? 12 : 0,
+            padding:        "6px 8px",
+            background:     "#030308",
+            border:         "1px solid #0C0C18",
+          }}>
+            {orphans.map((ep, ei) => (
+              <EndpointChip key={ep.id || ei} device={ep} />
+            ))}
+          </div>
+        )}
+
+        {!root && (
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#252535", marginTop: 40 }}>
+            NO DEVICES IN THIS SITE
+          </div>
+        )}
       </div>
     </div>
   );
@@ -369,7 +407,6 @@ function buildOverviewTopology(devices) {
     };
   }
 
-  // Fallback: group by type
   const sws = devices.filter(d => isInfra(d) && d.id !== root.id);
   const eps = devices.filter(d => !isInfra(d));
   if (!sws.length) return { root, switchRows: [] };
@@ -380,8 +417,8 @@ function buildOverviewTopology(devices) {
 
 function SiteOverviewCard({ siteId, name, devices }) {
   const { root, switchRows } = buildOverviewTopology(devices);
-  const total   = devices.length;
-  const offline = devices.filter(d => d.status === "offline").length;
+  const total    = devices.length;
+  const offline  = devices.filter(d => d.status === "offline").length;
   const hasIssue = offline > 0;
 
   const maxEpW = switchRows.reduce(
@@ -389,32 +426,38 @@ function SiteOverviewCard({ siteId, name, devices }) {
   );
   const svgW = Math.max(OV_LPAD + OV_BW + 32, OV_LPAD + OV_BW + 20 + maxEpW + 16);
   const svgH = OV_TPAD + OV_BH + OV_LGAP + switchRows.length * (OV_BH + OV_SGAP) + 20;
-  const spineX   = OV_LPAD + OV_BW / 2;
-  const rootY    = OV_TPAD;
+  const spineX    = OV_LPAD + OV_BW / 2;
+  const rootY     = OV_TPAD;
   const rowsStartY = rootY + OV_BH + OV_LGAP;
 
   return (
     <div
       data-testid={`unifi-overview-${siteId}`}
       style={{
-        display: "flex", flexDirection: "column",
-        background: "#06060F",
-        border: `1px solid ${hasIssue ? "#FF2A2A22" : "#0C0C1A"}`,
-        borderTop: `2px solid ${hasIssue ? "#FF2A2A" : "#1C3040"}`,
-        overflow: "hidden",
-        boxShadow: hasIssue ? "0 0 14px #FF2A2A12" : "none",
+        display:       "flex",
+        flexDirection: "column",
+        background:    "#06060F",
+        border:        `1px solid ${hasIssue ? "#FF2A2A22" : "#0C0C1A"}`,
+        borderTop:     `2px solid ${hasIssue ? "#FF2A2A" : "#1C3040"}`,
+        overflow:      "hidden",
+        boxShadow:     hasIssue ? "0 0 14px #FF2A2A12" : "none",
       }}
     >
-      {/* Card header */}
       <div style={{
-        padding: "6px 10px", flexShrink: 0,
-        background: hasIssue ? "#0A0404" : "#070710",
+        padding:      "6px 10px",
+        flexShrink:   0,
+        background:   hasIssue ? "#0A0404" : "#070710",
         borderBottom: `1px solid ${hasIssue ? "#FF2A2A1A" : "#0C0C18"}`,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
+        display:      "flex",
+        alignItems:   "center",
+        justifyContent: "space-between",
       }}>
         <span style={{
-          fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5, fontWeight: 700,
-          color: hasIssue ? "#FF8080" : "#7080A0", letterSpacing: "0.14em",
+          fontFamily:    "'JetBrains Mono',monospace",
+          fontSize:      9.5,
+          fontWeight:    700,
+          color:         hasIssue ? "#FF8080" : "#7080A0",
+          letterSpacing: "0.14em",
         }}>
           {(name || siteId).toUpperCase()}
         </span>
@@ -424,22 +467,26 @@ function SiteOverviewCard({ siteId, name, devices }) {
           </span>
           {offline > 0 && (
             <span style={{
-              fontFamily: "'JetBrains Mono',monospace", fontSize: 8,
-              color: "#FF4444", background: "#180808",
-              border: "1px solid #FF2A2A44", padding: "0 5px",
+              fontFamily: "'JetBrains Mono',monospace",
+              fontSize:   8,
+              color:      "#FF4444",
+              background: "#180808",
+              border:     "1px solid #FF2A2A44",
+              padding:    "0 5px",
             }}>
               {offline} DOWN
             </span>
           )}
           <div style={{
-            width: 7, height: 7, borderRadius: "50%",
-            background: hasIssue ? "#FF2A2A" : "#00FF66",
-            boxShadow: `0 0 5px ${hasIssue ? "#FF2A2A88" : "#00FF6688"}`,
+            width:       7,
+            height:      7,
+            borderRadius:"50%",
+            background:  hasIssue ? "#FF2A2A" : "#00FF66",
+            boxShadow:   `0 0 5px ${hasIssue ? "#FF2A2A88" : "#00FF6688"}`,
           }} />
         </div>
       </div>
 
-      {/* Mini topology SVG */}
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "4px 2px" }}>
         <svg
           viewBox={`0 0 ${svgW} ${svgH}`}
@@ -481,11 +528,11 @@ function SiteOverviewCard({ siteId, name, devices }) {
           )}
 
           {switchRows.map(({ node: sw, endpoints }, ri) => {
-            const rowY   = rowsStartY + ri * (OV_BH + OV_SGAP);
-            const col    = tc(sw.type);
-            const isOff  = sw.status === "offline";
-            const epSX   = OV_LPAD + OV_BW + 16;
-            const epY    = rowY + OV_BH / 2 - OV_DOT / 2;
+            const rowY  = rowsStartY + ri * (OV_BH + OV_SGAP);
+            const col   = tc(sw.type);
+            const isOff = sw.status === "offline";
+            const epSX  = OV_LPAD + OV_BW + 16;
+            const epY   = rowY + OV_BH / 2 - OV_DOT / 2;
             return (
               <g key={sw.id || ri}>
                 <line x1={spineX} y1={rowY+OV_BH/2} x2={OV_LPAD} y2={rowY+OV_BH/2}
@@ -514,8 +561,8 @@ function SiteOverviewCard({ siteId, name, devices }) {
                     stroke="#0E2030" strokeWidth={0.8} />
                 )}
                 {endpoints.map((ep, ei) => {
-                  const ex   = epSX + ei * (OV_DOT + OV_DGAP);
-                  const ecol = tc(ep.type);
+                  const ex     = epSX + ei * (OV_DOT + OV_DGAP);
+                  const ecol   = tc(ep.type);
                   const isEpOff = ep.status === "offline";
                   return (
                     <g key={ep.id || ei}>
@@ -541,17 +588,16 @@ function SiteOverviewCard({ siteId, name, devices }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Demo sites (used when backend is unreachable / returning 0 devices)
+// Demo sites
 // ─────────────────────────────────────────────────────────────────────────────
-const mk = (id, name, type, ip, uplink_mac, offline) => ({
+const mk    = (id, name, type, ip, uplink_mac, offline) => ({
   id, name, type, status: offline ? "offline" : "online", ip, mac: id, uplink_mac,
 });
-const mkGW  = (id,n,ip)       => mk(id,n,"gateway",     ip,null,false);
-const mkFW  = (id,n,ip)       => mk(id,n,"firewall",    ip,null,false);
-const mkSW  = (id,n,ip,up)    => mk(id,n,"switch",      ip,up, false);
-const mkPOE = (id,n,ip,up)    => mk(id,n,"poe_switch",  ip,up, false);
-const mkAP  = (id,n,ip,up,off)=> mk(id,n,"access_point",ip,up, !!off);
-const mkCAM = (id,n,ip,up)    => mk(id,n,"camera",      ip,up, false);
+const mkGW  = (id,n,ip)        => mk(id,n,"gateway",     ip,null,false);
+const mkSW  = (id,n,ip,up)     => mk(id,n,"switch",      ip,up, false);
+const mkPOE = (id,n,ip,up)     => mk(id,n,"poe_switch",  ip,up, false);
+const mkAP  = (id,n,ip,up,off) => mk(id,n,"access_point",ip,up, !!off);
+const mkCAM = (id,n,ip,up)     => mk(id,n,"camera",      ip,up, false);
 
 const DEMO_SITES = [
   {
@@ -721,9 +767,8 @@ export default function UniFiDevices() {
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastFetch,  setLastFetch]  = useState(null);
-  const [activeTab,  setActiveTab]  = useState(null);  // null = "ALL SITES"
+  const [activeTab,  setActiveTab]  = useState(null); // null = ALL SITES
 
-  // Keep sites ref current for use inside interval callback
   const sitesRef = useRef(sites);
   useEffect(() => { sitesRef.current = sites; }, [sites]);
 
@@ -764,8 +809,7 @@ export default function UniFiDevices() {
   }, [load]);
 
   // Kiosk auto-cycle: ALL → site[0] → ... → site[n] → ALL → ...
-  // Holds the main page kiosk timer while cycling through site tabs so the
-  // kiosk does not advance to the next page mid-cycle.
+  // Holds the main kiosk timer while cycling so the rotation doesn't advance mid-cycle.
   useEffect(() => {
     const iv = setInterval(() => {
       setActiveTab(prev => {
@@ -774,10 +818,10 @@ export default function UniFiDevices() {
         const next  = order[(idx + 1) % order.length];
 
         if (next === null) {
-          // Returned to ALL — release main kiosk so it can advance
+          // Back to ALL — release main kiosk
           if (window.__kioskHoldPage) window.__kioskHoldPage(false);
         } else if (prev === null) {
-          // Starting the site cycle — hold the main kiosk timer
+          // Starting site cycle — hold the main kiosk
           if (window.__kioskHoldPage) window.__kioskHoldPage(true);
         }
 
@@ -786,9 +830,9 @@ export default function UniFiDevices() {
     }, CYCLE_MS);
     return () => {
       clearInterval(iv);
-      if (window.__kioskHoldPage) window.__kioskHoldPage(false); // release on unmount
+      if (window.__kioskHoldPage) window.__kioskHoldPage(false);
     };
-  }, []); // once — uses ref internally
+  }, []);
 
   const totalDevices = sites.reduce((s, c) => s + c.devices.length, 0);
   const totalOffline = sites.reduce((s, c) => s + c.devices.filter(d => d.status === "offline").length, 0);
@@ -799,21 +843,32 @@ export default function UniFiDevices() {
 
       {/* ── Page header ── */}
       <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        flexShrink: 0, paddingBottom: 8,
+        display:        "flex",
+        alignItems:     "center",
+        justifyContent: "space-between",
+        flexShrink:     0,
+        paddingBottom:  8,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <h1 style={{
-            fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700,
-            color: "#E2E2E5", letterSpacing: "0.18em", margin: 0,
+            fontFamily:    "'JetBrains Mono',monospace",
+            fontSize:      13,
+            fontWeight:    700,
+            color:         "#E2E2E5",
+            letterSpacing: "0.18em",
+            margin:        0,
           }}>
             UNIFI NETWORK
           </h1>
           {isMock && (
             <span style={{
-              fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#FFB014",
-              background: "#1A1200", border: "1px solid #FFB01430",
-              padding: "2px 7px", letterSpacing: "0.1em",
+              fontFamily:    "'JetBrains Mono',monospace",
+              fontSize:      7.5,
+              color:         "#FFB014",
+              background:    "#1A1200",
+              border:        "1px solid #FFB01430",
+              padding:       "2px 7px",
+              letterSpacing: "0.1em",
             }}>
               DEMO DATA
             </span>
@@ -836,14 +891,20 @@ export default function UniFiDevices() {
           <div style={{ display: "flex", gap: 8, borderLeft: "1px solid #1C1C2A", paddingLeft: 16 }}>
             {[["GW","gateway"],["SW","switch"],["AP","access_point"],["CAM","camera"]].map(([label, type]) => (
               <span key={type} style={{
-                display: "flex", alignItems: "center", gap: 4,
-                fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5,
-                color: TYPE_COLOR[type], letterSpacing: "0.06em",
+                display:       "flex",
+                alignItems:    "center",
+                gap:           4,
+                fontFamily:    "'JetBrains Mono',monospace",
+                fontSize:      7.5,
+                color:         TYPE_COLOR[type],
+                letterSpacing: "0.06em",
               }}>
                 <span style={{
-                  width: 7, height: 7, display: "inline-block",
+                  width:        7,
+                  height:       7,
+                  display:      "inline-block",
                   borderRadius: type === "switch" ? 1 : "50%",
-                  background: TYPE_COLOR[type],
+                  background:   TYPE_COLOR[type],
                 }} />
                 {label}
               </span>
@@ -854,10 +915,16 @@ export default function UniFiDevices() {
             data-testid="unifi-refresh-btn"
             onClick={() => load(true)}
             style={{
-              background: "transparent", border: "1px solid #1C1C2A", color: "#3A3A50",
-              cursor: "pointer", padding: "5px 10px",
-              display: "flex", alignItems: "center", gap: 6,
-              fontFamily: "'JetBrains Mono',monospace", fontSize: 8,
+              background:  "transparent",
+              border:      "1px solid #1C1C2A",
+              color:       "#3A3A50",
+              cursor:      "pointer",
+              padding:     "5px 10px",
+              display:     "flex",
+              alignItems:  "center",
+              gap:         6,
+              fontFamily:  "'JetBrains Mono',monospace",
+              fontSize:    8,
             }}
           >
             <RefreshCw size={10} style={{ animation: (loading || refreshing) ? "spin 1s linear infinite" : "none" }} />
@@ -874,10 +941,11 @@ export default function UniFiDevices() {
 
       {/* ── Location sub-tab strip ── */}
       <div style={{
-        display: "flex", flexShrink: 0,
+        display:      "flex",
+        flexShrink:   0,
         borderBottom: "1px solid #0C0C1C",
-        background: "#040408",
-        overflowX: "auto",
+        background:   "#040408",
+        overflowX:    "auto",
       }}>
         {[{ siteId: null, name: "ALL SITES" }, ...sites].map(({ siteId, name }) => {
           const isActive    = activeTab === siteId;
@@ -893,27 +961,32 @@ export default function UniFiDevices() {
               data-testid={`unifi-tab-${siteId || "all"}`}
               onClick={() => setActiveTab(siteId)}
               style={{
-                background: isActive ? "#08081C" : "transparent",
-                border: "none",
-                borderBottom: `2px solid ${isActive ? (hasIssue ? "#FF4444" : "#0080CC") : "transparent"}`,
-                color: isActive ? (hasIssue ? "#FF8080" : "#A0B8D0") : "#3A3A52",
-                padding: "8px 18px",
-                cursor: "pointer",
-                flexShrink: 0,
-                fontFamily: "'JetBrains Mono',monospace",
-                fontSize: 9.5,
-                fontWeight: isActive ? 700 : 400,
-                letterSpacing: "0.12em",
-                whiteSpace: "nowrap",
-                display: "flex", alignItems: "center", gap: 8,
+                background:  isActive ? "#08081C" : "transparent",
+                border:      "none",
+                borderBottom:`2px solid ${isActive ? (hasIssue ? "#FF4444" : "#0080CC") : "transparent"}`,
+                color:       isActive ? (hasIssue ? "#FF8080" : "#A0B8D0") : "#3A3A52",
+                padding:     "8px 18px",
+                cursor:      "pointer",
+                flexShrink:  0,
+                fontFamily:  "'JetBrains Mono',monospace",
+                fontSize:    9.5,
+                fontWeight:  isActive ? 700 : 400,
+                letterSpacing:"0.12em",
+                whiteSpace:  "nowrap",
+                display:     "flex",
+                alignItems:  "center",
+                gap:         8,
               }}
             >
               {(name || siteId).toUpperCase()}
               {siteId && hasIssue && (
                 <span style={{
-                  background: "#FF2A2A", color: "#FFE0E0",
-                  borderRadius: 10, padding: "1px 6px",
-                  fontSize: 7.5, fontWeight: 700,
+                  background:   "#FF2A2A",
+                  color:        "#FFE0E0",
+                  borderRadius: 10,
+                  padding:      "1px 6px",
+                  fontSize:     7.5,
+                  fontWeight:   700,
                 }}>
                   {siteOffline}
                 </span>
@@ -926,20 +999,19 @@ export default function UniFiDevices() {
       {/* ── Content area ── */}
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {activeTab === null ? (
-          /* ALL SITES — 4-column overview grid */
           <div style={{
-            flex: 1, minHeight: 0,
-            display: "grid",
+            flex:                1,
+            minHeight:           0,
+            display:             "grid",
             gridTemplateColumns: "repeat(4, 1fr)",
-            gridAutoRows: "1fr",
-            gap: 8,
-            paddingTop: 8,
-            overflow: "hidden",
+            gridAutoRows:        "1fr",
+            gap:                 8,
+            paddingTop:          8,
+            overflow:            "hidden",
           }}>
             {sites.map(s => <SiteOverviewCard key={s.siteId} {...s} />)}
           </div>
         ) : activeSite ? (
-          /* Per-site full topology tree */
           <SiteTopologyView key={activeSite.siteId} {...activeSite} />
         ) : null}
       </div>

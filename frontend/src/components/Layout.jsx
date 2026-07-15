@@ -89,6 +89,16 @@ export default function Layout({ children }) {
     pageIdxRef.current = kioskPagesRef.current.indexOf(location.pathname);
   }, [kioskPages, location.pathname]);
 
+  // Register global kiosk-hold API so child pages (e.g. UniFiDevices) can pause rotation
+  useEffect(() => {
+    window.__kioskHoldPage = (hold) => {
+      isPausedRef.current = hold;
+      setIsPaused(hold);
+      if (!hold) { tickRef.current = 0; setDisplayTick(0); }
+    };
+    return () => { delete window.__kioskHoldPage; };
+  }, []); // mount/unmount only — uses refs internally
+
   // Single persistent 1-second heartbeat — uses refs for all decision-making
   useEffect(() => {
     const timer = setInterval(() => {
