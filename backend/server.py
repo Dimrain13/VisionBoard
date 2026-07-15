@@ -482,26 +482,89 @@ def _norm_unifi_device(d: dict, label: str) -> dict:
 
 async def _fetch_unifi_controller(url: str, username: str, password: str, site: str, label: str) -> list:
     """Fetch all devices from one UniFi Network controller.
-    Auto-detects UniFi OS (UDM/UXG) vs legacy (CloudKey/USG) API path."""
+
+    Flow:
+      1. Try UniFi OS login (/api/auth/login) → proxy path
+      2. Fall back to legacy CloudKey/USG login (/api/login) → cookie session
+         + auto-discover the actual site name via /api/self/sites in case
+           the configured site id does not match the controller's real name.
+    All failures log the raw HTTP status + body for Pi-side debugging.
+    """
     try:
-        async with httpx.AsyncClient(verify=False, timeout=10) as c:
-            # 1. Try UniFi OS (Dream Machine, UXG, etc.) — /api/auth/login
-            r1 = await c.post(f"{url}/api/auth/login", json={"username": username, "password": password})
+        async with httpx.AsyncClient(verify=False, timeout=10, follow_redirects=True) as c:
+            # 1. UniFi OS (Dream Machine, UXG, UDM-Pro)
+            r1 = await c.post(
+                f"{url}/api/auth/login",
+                json={"username": username, "password": password},
+            )
             if r1.status_code in (200, 201):
-                dr = await c.get(f"{url}/proxy/network/api/s/{site}/stat/device")
+                logger.info("UniFi OS login OK for %s", url)
+                actual_site = site
+                dr = await c.get(f"{url}/proxy/network/api/s/{actual_site}/stat/device")
             else:
-                # 2. Fall back to legacy — /api/login
-                r2 = await c.post(f"{url}/api/login", json={"username": username, "password": password})
+                # 2. Legacy CloudKey / USG controller
+                logger.info(
+                    "UniFi OS login returned HTTP %s for %s — trying legacy /api/login",
+                    r1.status_code, url,
+                )
+                r2 = await c.post(
+                    f"{url}/api/login",
+                    json={"username": username, "password": password},
+                )
                 if r2.status_code not in (200, 201):
-                    logger.warning(f"UniFi login failed for {url}: {r2.status_code}")
+                    logger.warning(
+                        "UniFi legacy login failed for %s: HTTP %s — %s",
+                        url, r2.status_code, r2.text[:300],
+                    )
                     return []
-                dr = await c.get(f"{url}/api/s/{site}/stat/device")
+
+                # Validate rc:ok in legacy response body
+                try:
+                    meta = r2.json().get("meta", {})
+                    if meta.get("rc") and meta["rc"] != "ok":
+                        logger.warning("UniFi legacy login rc=%s for %s", meta["rc"], url)
+                        return []
+                except Exception:
+                    pass
+
+                cookie_names = [ck.name for ck in c.cookies.jar]
+                logger.info("UniFi legacy login OK for %s — cookies: %s", url, cookie_names)
+
+                # Auto-discover site name — configured value may differ from controller
+                actual_site = site
+                try:
+                    sites_r = await c.get(f"{url}/api/self/sites")
+                    if sites_r.status_code == 200:
+                        available = [sg.get("name") for sg in sites_r.json().get("data", [])]
+                        logger.info("UniFi available sites on %s: %s", url, available)
+                        if available and site not in available:
+                            actual_site = available[0]
+                            logger.info(
+                                "UniFi: site %r not found, using %r instead", site, actual_site
+                            )
+                    else:
+                        logger.warning(
+                            "UniFi site discovery HTTP %s for %s", sites_r.status_code, url
+                        )
+                except Exception as se:
+                    logger.debug("UniFi site discovery error for %s: %s", url, se)
+
+                dr = await c.get(f"{url}/api/s/{actual_site}/stat/device")
+
+            logger.info("UniFi device list: HTTP %s from %s (site=%s)", dr.status_code, url, actual_site)
             if dr.status_code != 200:
-                logger.warning(f"UniFi devices HTTP {dr.status_code} from {url}")
+                logger.warning(
+                    "UniFi devices HTTP %s from %s — body: %s",
+                    dr.status_code, url, dr.text[:300],
+                )
                 return []
-            return [_norm_unifi_device(d, label) for d in dr.json().get("data", [])]
+
+            devs = dr.json().get("data", [])
+            logger.info("UniFi %s (%s): %d device(s) fetched", label, url, len(devs))
+            return [_norm_unifi_device(d, label) for d in devs]
+
     except Exception as e:
-        logger.warning(f"UniFi controller {url} error: {e}")
+        logger.warning("UniFi controller %s error: %s", url, e)
         return []
 
 _unifi_cache: dict = {}
@@ -1116,29 +1179,102 @@ _wug_data_cache:  dict = {"topology": None, "alerts": [], "ts": 0.0}
 
 
 async def _wug_get_token(url: str, username: str, password: str) -> str:
-    """Fetch or return a cached WUG bearer token (refreshes 5 min before expiry)."""
+    """Fetch or return a cached WUG bearer token (refreshes 5 min before expiry).
+
+    Tries multiple common WUG REST API base paths in order:
+      /api/v1/token           (WUG 2019+ cloud/Linux installs)
+      /NmConsole/api/v1/token (WUG Windows installs — most common on-prem)
+
+    Logs the raw HTTP status + first 500 chars of the response body whenever
+    the server returns a non-200 or non-JSON payload.
+    """
     now    = time.time()
     cached = _wug_token_cache.get(url)
     if cached and now < cached.get("expires_at", 0) - 300:
         return cached["token"]
-    async with httpx.AsyncClient(verify=False, timeout=15) as client:
-        resp = await client.post(
-            f"{url.rstrip('/')}/api/v1/token",
-            data={"grant_type": "password", "username": username, "password": password},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    token = data["access_token"]
-    _wug_token_cache[url] = {"token": token, "expires_at": now + data.get("expires_in", 86399)}
+
+    base = url.rstrip("/")
+    # Try common WUG token endpoint paths in order
+    candidate_paths = [
+        "/api/v1/token",
+        "/NmConsole/api/v1/token",
+    ]
+
+    last_err = None
+    for path in candidate_paths:
+        token_url = f"{base}{path}"
+        logger.info("WUG: trying token endpoint %s (user=%s)", token_url, username)
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=False) as client:
+                resp = await client.post(
+                    token_url,
+                    data={"grant_type": "password", "username": username, "password": password},
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+
+            ct = resp.headers.get("content-type", "")
+            logger.info("WUG token response from %s: HTTP %s  content-type=%s", path, resp.status_code, ct)
+
+            # Expose redirect targets
+            if resp.status_code in (301, 302, 303, 307, 308):
+                redir = resp.headers.get("location", "<no Location header>")
+                logger.error("WUG %s redirected → %s", path, redir)
+                last_err = ValueError(f"WUG token redirected to {redir!r} — SSO wall?")
+                continue
+
+            if resp.status_code == 404:
+                logger.info("WUG 404 on %s — trying next path", path)
+                last_err = ValueError(f"WUG 404 on {path}")
+                continue
+
+            if resp.status_code != 200:
+                logger.error("WUG token HTTP %s on %s — body: %s", resp.status_code, path, resp.text[:500])
+                last_err = ValueError(f"WUG HTTP {resp.status_code}: {resp.text[:200]}")
+                continue
+
+            # Detect HTML error pages masquerading as 200
+            if "json" not in ct:
+                logger.error(
+                    "WUG token is not JSON (HTTP %s, ct=%r) on %s — body: %s",
+                    resp.status_code, ct, path, resp.text[:500]
+                )
+                last_err = ValueError(f"WUG non-JSON on {path} (ct={ct!r}): {resp.text[:200]}")
+                continue
+
+            data  = resp.json()
+            token = data.get("access_token")
+            if not token:
+                last_err = ValueError(f"WUG response missing access_token on {path}: {data}")
+                continue
+
+            _wug_token_cache[url] = {
+                "token": token,
+                "expires_at": now + data.get("expires_in", 86399),
+                "api_prefix": path.replace("/token", ""),  # e.g. /api/v1 or /NmConsole/api/v1
+            }
+            logger.info("WUG token acquired via %s (expires_in=%ss)", path, data.get("expires_in", 86399))
+            return token
+
+        except (ValueError,) as e:
+            last_err = e
+            continue
+        except Exception as e:
+            last_err = e
+            logger.error("WUG token request to %s failed: %s", token_url, e)
+            continue
+
+    raise last_err or ValueError("WUG token: all endpoints failed")
     return token
 
 
 async def _wug_get(url: str, path: str, token: str, params: dict | None = None) -> dict:
-    """Authenticated GET against the WUG REST API."""
+    """Authenticated GET against the WUG REST API.
+    Uses the same api_prefix that was discovered when acquiring the token."""
+    cached = _wug_token_cache.get(url, {})
+    prefix = cached.get("api_prefix", "/api/v1")  # default to /api/v1 if not yet discovered
     async with httpx.AsyncClient(verify=False, timeout=20) as client:
         resp = await client.get(
-            f"{url.rstrip('/')}/api/v1/{path.lstrip('/')}",
+            f"{url.rstrip('/')}{prefix}/{path.lstrip('/')}",
             headers={"Authorization": f"Bearer {token}"},
             params=params or {},
         )
@@ -1591,6 +1727,109 @@ async def get_unifi_devices_endpoint(demo: bool = False):
     _unifi_cache["devices"] = devices
     _unifi_cache["updated"] = now
     return {"devices": devices, "updated": now}
+
+
+# ─── Connectivity Diagnostics ────────────────────────────────────────────────
+
+@api_router.get("/debug/connectivity")
+async def debug_connectivity():
+    """Live diagnostic endpoint — call from the Pi to check WUG and UniFi
+    reachability without reading supervisor log files.
+
+    Returns raw HTTP status, content-type, redirect targets, available sites,
+    and device counts so you can identify the exact failure point instantly.
+    """
+    s = load_settings()
+    out: dict = {"timestamp": datetime.now(timezone.utc).isoformat()}
+
+    # ── WUG ────────────────────────────────────────────────────────────────────
+    wug_url  = s.get("wug_url", "").strip()
+    wug_user = s.get("wug_username", "").strip()
+    wug_pwd  = s.get("wug_password", "").strip()
+
+    if not (wug_url and wug_user):
+        out["wug"] = {"status": "not_configured"}
+    else:
+        wug_r: dict = {"url": wug_url}
+        candidate_paths = ["/api/v1/token", "/NmConsole/api/v1/token"]
+        for path in candidate_paths:
+            token_url = f"{wug_url.rstrip('/')}{path}"
+            wug_r[f"tried_{path}"] = token_url
+            try:
+                async with httpx.AsyncClient(verify=False, timeout=10, follow_redirects=False) as c:
+                    r = await c.post(
+                        token_url,
+                        data={"grant_type": "password", "username": wug_user, "password": wug_pwd},
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                wug_r[path] = {
+                    "http_status":  r.status_code,
+                    "content_type": r.headers.get("content-type", ""),
+                    "redirect_to":  r.headers.get("location") if r.status_code in (301,302,303,307,308) else None,
+                    "body_preview": r.text[:300],
+                    "token_ok":     bool("json" in r.headers.get("content-type","") and r.status_code==200 and r.json().get("access_token")),
+                }
+                if wug_r[path]["token_ok"]:
+                    wug_r["working_path"] = path
+                    break
+            except Exception as e:
+                wug_r[path] = {"error": str(e)}
+        out["wug"] = wug_r
+
+    # ── UniFi ──────────────────────────────────────────────────────────────────
+    uni_url  = s.get("unifi_controller1_url", "").strip()
+    uni_user = s.get("unifi_controller1_username", "").strip()
+    uni_pwd  = s.get("unifi_controller1_password", "").strip()
+    uni_site = s.get("unifi_controller1_site", "default")
+
+    if not (uni_url and uni_user):
+        out["unifi"] = {"status": "not_configured"}
+    else:
+        uni_r: dict = {"url": uni_url, "configured_site": uni_site}
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=10, follow_redirects=True) as c:
+                r1 = await c.post(f"{uni_url}/api/auth/login",
+                                  json={"username": uni_user, "password": uni_pwd})
+                uni_r["os_login_status"] = r1.status_code
+
+                if r1.status_code in (200, 201):
+                    uni_r["auth_method"] = "unifi_os"
+                    dr = await c.get(f"{uni_url}/proxy/network/api/s/{uni_site}/stat/device")
+                    uni_r["device_fetch_status"] = dr.status_code
+                    if dr.status_code == 200:
+                        uni_r["device_count"] = len(dr.json().get("data", []))
+                else:
+                    r2 = await c.post(f"{uni_url}/api/login",
+                                      json={"username": uni_user, "password": uni_pwd})
+                    uni_r["legacy_login_status"]  = r2.status_code
+                    uni_r["legacy_login_body"]     = r2.text[:200]
+
+                    if r2.status_code in (200, 201):
+                        uni_r["auth_method"]    = "legacy"
+                        uni_r["session_cookies"] = [ck.name for ck in c.cookies.jar]
+
+                        sites_r = await c.get(f"{uni_url}/api/self/sites")
+                        uni_r["sites_status"] = sites_r.status_code
+                        if sites_r.status_code == 200:
+                            available = [sg.get("name") for sg in sites_r.json().get("data", [])]
+                            uni_r["available_sites"] = available
+                            actual = available[0] if available and uni_site not in available else uni_site
+                        else:
+                            actual = uni_site
+
+                        dr = await c.get(f"{uni_url}/api/s/{actual}/stat/device")
+                        uni_r["device_fetch_site"]   = actual
+                        uni_r["device_fetch_status"] = dr.status_code
+                        uni_r["device_fetch_body"]   = dr.text[:200] if dr.status_code != 200 else None
+                        if dr.status_code == 200:
+                            uni_r["device_count"] = len(dr.json().get("data", []))
+                    else:
+                        uni_r["auth_method"] = "failed"
+        except Exception as e:
+            uni_r["error"] = str(e)
+        out["unifi"] = uni_r
+
+    return out
 
 
 # ─── Vivantio Ticketing ───────────────────────────────────────────────────────

@@ -64,14 +64,14 @@ function genDevices(prefix, n, downIdxs = []) {
 
 const MOCK = {
   locations: [
-    { id: "novi",        name: "Novi HQ",     devices: genDevices("novi",   34, []) },
-    { id: "remus",       name: "Remus",        devices: genDevices("remus",  22, [4, 11]) },
-    { id: "mt-pleasant", name: "Mt. Pleasant", devices: genDevices("mp",     25, []) },
-    { id: "canton",      name: "Canton",       devices: genDevices("canton", 68, [7, 14, 31, 45]) },
-    { id: "canton-whs",  name: "Canton WHS",   devices: genDevices("cwhs",   29, []) },
-    { id: "constantine", name: "Constantine",  devices: genDevices("const",  17, []) },
-    { id: "ovid",        name: "Ovid",         devices: genDevices("ovid",   14, []) },
-    { id: "middlebury",  name: "Middlebury",   devices: genDevices("mb",     20, []) },
+    { id: "novi",        name: "Novi HQ",      devices: genDevices("novi",   42, []) },
+    { id: "remus",       name: "Remus",         devices: genDevices("remus",  28, [4, 11]) },
+    { id: "mt-pleasant", name: "Mt. Pleasant",  devices: genDevices("mp",     31, []) },
+    { id: "canton",      name: "Canton",        devices: genDevices("canton", 68, [7, 14, 31, 45]) },
+    { id: "canton-whs",  name: "Canton WHS",    devices: genDevices("cwhs",   35, []) },
+    { id: "constantine", name: "Constantine",   devices: genDevices("const",  22, []) },
+    { id: "ovid",        name: "Ovid",          devices: genDevices("ovid",   18, []) },
+    { id: "middlebury",  name: "Middlebury",    devices: genDevices("mb",     25, [2]) },
   ],
 };
 
@@ -125,8 +125,8 @@ function layoutDevices(devices, cx, cy) {
 
 // ── SiteCard ──────────────────────────────────────────────────────────────────
 
-const SVGW = 460, SVGH = 310;
-const CX = SVGW / 2, CY = SVGH / 2 + 6;
+const SVGW = 460, SVGH = 340;
+const CX = SVGW / 2, CY = SVGH / 2 + 8;
 const DEV_R = 6;   // standard device dot radius
 const ROOT_R = 9;  // root (gateway/firewall) dot radius
 
@@ -197,9 +197,9 @@ function SiteCard({ loc }) {
           <rect width={SVGW} height={SVGH} fill="#040410" />
 
           {/* Faint concentric ring guides */}
-          {[1, 2, 3, 4, 5].map(i => (
+          {[1, 2, 3, 4, 5, 6].map(i => (
             <circle key={i} cx={CX} cy={CY} r={ringR(i)}
-              fill="none" stroke="#0A0A18" strokeWidth="0.5" />
+              fill="none" stroke="#0C1428" strokeWidth="0.6" strokeDasharray="2 4" />
           ))}
 
           {/* Connection lines: parent → child */}
@@ -208,12 +208,13 @@ function SiteCard({ loc }) {
             const par = byId[dev.parent_id];
             if (!par) return null;
             const isDown = dev.status === "down";
+            const isWarn = dev.status === "warning";
             return (
               <line key={`ln-${dev.id}`}
                 x1={par.x} y1={par.y} x2={dev.x} y2={dev.y}
-                stroke={isDown ? "#FF2A2A" : "#1A1A2A"}
-                strokeWidth={isDown ? 0.7 : 0.4}
-                opacity={isDown ? 0.5 : 0.35}
+                stroke={isDown ? "#FF3030" : isWarn ? "#FFB01480" : "#0E2A50"}
+                strokeWidth={isDown ? 0.9 : 0.55}
+                opacity={isDown ? 0.7 : 0.85}
               />
             );
           })}

@@ -99,9 +99,27 @@ Create a dashboard in Python/React to display important IT information at a glan
 - inferParents updated: firewall > gateway > switch > first device as root
 - Cameras distributed across switches (same as APs)
 
-### Map Animation
-- Canvas 2D (not CSS Motion Path or DOM updates) — Pi `--disable-gpu` safe
-- Dots animate along SVG path coordinates at 15fps
+### WUG REST API Fix (2026-07-15)
+- `_wug_get_token` now tries both `/api/v1/token` AND `/NmConsole/api/v1/token` automatically
+- Caches the working path prefix so all subsequent `_wug_get` calls use the same prefix
+- Full error logging: HTTP status, content-type, redirect target, and raw body preview on any failure
+- `_wug_get` updated to use `api_prefix` from token cache (defaults to `/api/v1` for backward compat)
+
+### UniFi Controller Fix (2026-07-15)
+- `_fetch_unifi_controller` now auto-discovers the site name via `/api/self/sites` after legacy login
+- Logs cookies after legacy login, logs raw device-fetch response body on failures
+- Fixed `actual_site` scope bug (now set in both OS and legacy code paths)
+- Added `follow_redirects=True` to avoid silent redirect failures
+
+### Debug Endpoint (2026-07-15)
+- `GET /api/debug/connectivity` — hits WUG (both paths) and UniFi (both auth methods + site discovery + device count) and returns full diagnostic JSON
+- Run from Pi: `curl -s http://localhost:8001/api/debug/connectivity | python3 -m json.tool`
+
+### WUG Visualization (2026-07-15)
+- Connection lines changed from near-invisible `#1A1A2A` → visible `#0E2A50` (dim cyberpunk blue), opacity 0.85
+- Ring guide circles now dashed `strokeDasharray="2 4"` for grid texture without obscuring dots
+- SVG height increased 310→340 to give extra room for large sites (Canton 68 devices)
+- Added 6th ring guide, mock device counts bumped to match real WUG density estimates
 
 
 
