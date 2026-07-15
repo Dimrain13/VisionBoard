@@ -1,24 +1,31 @@
 /**
  * UniFiDevices — Per-site network topology tree with location sub-tabs.
  *
- * Per-site view: Left-to-right hierarchical tree
- *   [GW/FW] ─── [Core SW] ─── [IDF SW-1] ─── [AP-01]
- *                           │             └── [AP-02]
- *                           └── [IDF SW-2] ─── [CAM-01]
+ * Per-site view: Top-down hierarchical tree
+ *        [  GW / FW  ]
+ *       /      |      \
+ *   [SW-1]  [SW-2]  [SW-3]
+ *    / | \    / \      |
+ *  AP AP AP  AP AP    CAM
  *
  * Every device = named labeled box. Lines show actual uplink connections.
  * Supports arbitrary tree depth (GW → Core SW → IDF SW → AP, etc.)
  * Sub-tabs: [ALL SITES] + one tab per location. Auto-cycles every 8s (kiosk).
+ * Holds main page kiosk timer while cycling site tabs.
  * Pi-safe: static SVG only, no canvas, no transform animations.
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { RefreshCw } from "lucide-react";
 
-const API       = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const CYCLE_MS  = 8000;   // ms per site tab in kiosk auto-cycle
-const VW        = 1900;   // SVG virtual canvas width
-const VH        = 900;    // SVG virtual canvas height
+const API      = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const CYCLE_MS = 8000;   // ms per site tab in kiosk auto-cycle
+
+// Virtual canvas constants — top-down layout
+const LEAF_W  = 90;    // virtual horizontal units per leaf column
+const BAND_H  = 290;   // virtual vertical units per depth level
+const MAX_GW_W = 240;  // cap on gateway node width
+const MAX_SW_W = 190;  // cap on switch node width
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Colours / labels
@@ -127,32 +134,54 @@ function assignRows(node, ctr) {
   node._row   = (first + last) / 2;
 }
 
+// Returns node height for a given tree level / leaf status
+function nodeHFor(level, isLeaf) {
+  if (isLeaf)      return Math.min(74, Math.max(34, BAND_H * 0.30));
+  if (level === 0) return Math.min(58, BAND_H * 0.24);
+  return               Math.min(50, BAND_H * 0.21);
+}
+
 function computeLayout(tree) {
-  if (!tree) return { nodes: [], edges: [] };
+  if (!tree) return { nodes: [], edges: [], vw: 1900, vh: 870 };
 
   assignRows(tree, { v: 0 });
 
-  const levels = getDepth(tree) + 1;   // number of depth levels
+  const levels = getDepth(tree) + 1;
   const leaves = countLeaves(tree);
 
-  const colW  = (VW - 40) / levels;
-  const rowH  = (VH - 40) / leaves;
-  const nodeH = Math.min(56, Math.max(22, rowH - 8));
-  const nodeW = Math.max(60, colW - 44);
+  // Canvas: wide enough for leaf columns, tall enough for depth levels
+  const vw   = Math.max(1900, leaves * LEAF_W);
+  const vh   = levels * BAND_H;
+  const colW = vw / leaves;
 
   const nodes = [];
   const edges = [];
 
   function collect(node, level) {
-    const x = 20 + level * colW;
-    const y = 20 + node._row * rowH + (rowH - nodeH) / 2;
-    nodes.push({ ...node, x, y, nodeW, nodeH });
+    const cx     = node._row * colW + colW / 2;   // horizontal centre
+    const cy     = level * BAND_H + BAND_H / 2;    // vertical centre
+    const isLeaf = !node.children.length;
+    const nh     = nodeHFor(level, isLeaf);
+
+    let nw;
+    if (isLeaf) {
+      nw = Math.max(48, colW - 4);
+    } else if (level === 0) {
+      nw = Math.min(MAX_GW_W, countLeaves(node) * colW - 20);
+    } else {
+      nw = Math.min(MAX_SW_W, countLeaves(node) * colW - 12);
+    }
+
+    nodes.push({ ...node, x: cx - nw / 2, y: cy - nh / 2, nodeW: nw, nodeH: nh });
+
     node.children.forEach(child => {
-      const cx = 20 + (level + 1) * colW;
-      const cy = 20 + child._row * rowH + rowH / 2;
+      const childCx     = child._row * colW + colW / 2;
+      const childIsLeaf = !child.children.length;
+      const childNH     = nodeHFor(level + 1, childIsLeaf);
+      const childCy     = (level + 1) * BAND_H + BAND_H / 2;
       edges.push({
-        x1: x + nodeW, y1: y + nodeH / 2,
-        x2: cx,        y2: cy,
+        x1: cx,      y1: cy + nh / 2,
+        x2: childCx, y2: childCy - childNH / 2,
         offline: child.device.status === "offline",
       });
       collect(child, level + 1);
@@ -160,56 +189,72 @@ function computeLayout(tree) {
   }
   collect(tree, 0);
 
-  return { nodes, edges };
+  return { nodes, edges, vw, vh };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SVG — labeled node box
 // ─────────────────────────────────────────────────────────────────────────────
 function NodeBox({ x, y, nodeW, nodeH, device }) {
-  const col    = tc(device.type);
-  const isOff  = device.status === "offline";
-  const label  = TYPE_LABEL[device.type] || "DEV";
-  const fs1    = Math.max(8,  Math.min(15, nodeH * 0.33));   // device name
-  const fs2    = Math.max(6.5,Math.min(11, nodeH * 0.23));   // IP / secondary
-  const pillW  = Math.max(24, nodeH * 0.70);
-  const ledR   = Math.max(3,  nodeH * 0.09);
+  const col   = tc(device.type);
+  const isOff = device.status === "offline";
+  const label = TYPE_LABEL[device.type] || "DEV";
 
+  // Narrow nodes (leaf AP/CAM) use a vertical card layout (pill on top, name below).
+  // Wide nodes (GW, SW) use a horizontal layout (pill on left, name on right).
+  if (nodeW < 120) {
+    const pillH  = Math.max(22, nodeH * 0.40);
+    const nameFs = Math.max(6, Math.min(9, nodeW / 9));
+    const ipFs   = Math.max(5, nameFs - 1.5);
+    const ip2oct = (device.ip || "").split(".").slice(-2).join(".");
+    return (
+      <g>
+        <rect x={x} y={y} width={nodeW} height={nodeH} rx={2}
+          fill="#05050E" stroke={isOff ? "#FF2A2A88" : `${col}40`} strokeWidth={1} />
+        <rect x={x + 3} y={y + 3} width={nodeW - 6} height={pillH - 2} rx={1}
+          fill={isOff ? "#FF2A2A18" : `${col}20`} />
+        <text x={x + nodeW / 2} y={y + pillH * 0.62} textAnchor="middle"
+          fontSize={Math.min(11, pillH * 0.54)} fill={isOff ? "#FF6666" : col}
+          fontFamily="'JetBrains Mono',monospace" fontWeight={700}>{label}</text>
+        <text x={x + nodeW / 2} y={y + pillH + nameFs + 3} textAnchor="middle"
+          fontSize={nameFs} fill={isOff ? "#FF8080" : "#B0B0C8"}
+          fontFamily="'JetBrains Mono',monospace" fontWeight={600}>
+          {(device.name || "").slice(0, 10)}
+        </text>
+        <text x={x + nodeW / 2} y={y + pillH + nameFs * 2 + 7} textAnchor="middle"
+          fontSize={ipFs} fill={isOff ? "#FF4444" : "#243C54"}
+          fontFamily="'JetBrains Mono',monospace">{ip2oct}</text>
+        <circle cx={x + nodeW - 4} cy={y + 5} r={3}
+          fill={isOff ? "#FF2A2A" : col} opacity={0.9} />
+      </g>
+    );
+  }
+
+  // Horizontal layout for wide infrastructure nodes (GW, SW)
+  const fs1   = Math.max(8, Math.min(15, nodeH * 0.33));
+  const fs2   = Math.max(6.5, Math.min(11, nodeH * 0.23));
+  const pillW = Math.max(24, nodeH * 0.70);
+  const ledR  = Math.max(3, nodeH * 0.09);
   return (
     <g>
-      {/* Box border */}
       <rect x={x} y={y} width={nodeW} height={nodeH} rx={2}
-        fill="#05050E"
-        stroke={isOff ? "#FF2A2A88" : `${col}40`}
-        strokeWidth={isOff ? 1.5 : 1} />
-      {/* Left colour accent */}
+        fill="#05050E" stroke={isOff ? "#FF2A2A88" : `${col}40`} strokeWidth={isOff ? 1.5 : 1} />
       <rect x={x} y={y} width={6} height={nodeH} rx={1}
         fill={isOff ? "#FF2A2A" : col} opacity={0.9} />
-      {/* Type pill */}
       <rect x={x + 9} y={y + 4} width={pillW} height={nodeH - 8} rx={1}
         fill={isOff ? "#FF2A2A14" : `${col}18`} />
-      <text
-        x={x + 9 + pillW / 2} y={y + nodeH / 2 + fs2 * 0.38}
-        fontSize={fs2} textAnchor="middle"
-        fill={isOff ? "#FF6666" : col}
-        fontFamily="'JetBrains Mono',monospace" fontWeight={700}>
-        {label}
-      </text>
-      {/* Device name */}
-      <text
-        x={x + 14 + pillW} y={y + nodeH / 2 - 1}
-        fontSize={fs1} fill={isOff ? "#FF8080" : "#C8C8D8"}
+      <text x={x + 9 + pillW / 2} y={y + nodeH / 2 + fs2 * 0.38} fontSize={fs2}
+        textAnchor="middle" fill={isOff ? "#FF6666" : col}
+        fontFamily="'JetBrains Mono',monospace" fontWeight={700}>{label}</text>
+      <text x={x + 14 + pillW} y={y + nodeH / 2 - 1} fontSize={fs1}
+        fill={isOff ? "#FF8080" : "#C8C8D8"}
         fontFamily="'JetBrains Mono',monospace" fontWeight={600}>
-        {(device.name || "").slice(0, 20)}
+        {(device.name || "").slice(0, 22)}
       </text>
-      {/* IP address */}
-      <text
-        x={x + 14 + pillW} y={y + nodeH / 2 + fs2 + 3}
-        fontSize={fs2} fill={isOff ? "#FF4444" : "#2A4A6A"}
-        fontFamily="'JetBrains Mono',monospace">
+      <text x={x + 14 + pillW} y={y + nodeH / 2 + fs2 + 3} fontSize={fs2}
+        fill={isOff ? "#FF4444" : "#2A4A6A"} fontFamily="'JetBrains Mono',monospace">
         {(device.ip || "").slice(0, 18)}
       </text>
-      {/* Status LED */}
       <circle cx={x + nodeW - 10} cy={y + nodeH / 2} r={ledR}
         fill={isOff ? "#FF2A2A" : col} opacity={0.9} />
     </g>
@@ -219,11 +264,12 @@ function NodeBox({ x, y, nodeW, nodeH, device }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // SVG — elbow connector (parent right edge → child left edge)
 // ─────────────────────────────────────────────────────────────────────────────
+// Vertical elbow: parent bottom-centre → mid-y → child x → child top-centre
 function ElbowEdge({ x1, y1, x2, y2, offline }) {
-  const mid = (x1 + x2) / 2;
+  const mid = (y1 + y2) / 2;
   return (
     <path
-      d={`M ${x1} ${y1} H ${mid} V ${y2} H ${x2}`}
+      d={`M ${x1} ${y1} V ${mid} H ${x2} V ${y2}`}
       fill="none"
       stroke={offline ? "#FF2A2A77" : "#1A4870"}
       strokeWidth={offline ? 1.5 : 1.2}
@@ -276,7 +322,7 @@ function SiteTopologyView({ siteId, name, devices }) {
       {/* Topology SVG */}
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "4px 2px" }}>
         <svg
-          viewBox={`0 0 ${VW} ${VH}`}
+          viewBox={`0 0 ${layout.vw} ${layout.vh}`}
           preserveAspectRatio="xMidYMid meet"
           style={{ width: "100%", height: "100%", display: "block" }}
         >
@@ -717,16 +763,31 @@ export default function UniFiDevices() {
     return () => clearInterval(iv);
   }, [load]);
 
-  // Kiosk auto-cycle: ALL → site[0] → site[1] → ... → ALL → ...
+  // Kiosk auto-cycle: ALL → site[0] → ... → site[n] → ALL → ...
+  // Holds the main page kiosk timer while cycling through site tabs so the
+  // kiosk does not advance to the next page mid-cycle.
   useEffect(() => {
     const iv = setInterval(() => {
       setActiveTab(prev => {
         const order = [null, ...sitesRef.current.map(s => s.siteId)];
         const idx   = order.indexOf(prev);
-        return order[(idx + 1) % order.length];
+        const next  = order[(idx + 1) % order.length];
+
+        if (next === null) {
+          // Returned to ALL — release main kiosk so it can advance
+          if (window.__kioskHoldPage) window.__kioskHoldPage(false);
+        } else if (prev === null) {
+          // Starting the site cycle — hold the main kiosk timer
+          if (window.__kioskHoldPage) window.__kioskHoldPage(true);
+        }
+
+        return next;
       });
     }, CYCLE_MS);
-    return () => clearInterval(iv);
+    return () => {
+      clearInterval(iv);
+      if (window.__kioskHoldPage) window.__kioskHoldPage(false); // release on unmount
+    };
   }, []); // once — uses ref internally
 
   const totalDevices = sites.reduce((s, c) => s + c.devices.length, 0);
