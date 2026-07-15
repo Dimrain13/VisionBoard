@@ -1430,15 +1430,114 @@ def _wug_make_location(group: dict, raw_devs: list) -> dict:
     }
 
 
+async def _wug_session_login(base_url: str, username: str, password: str) -> httpx.AsyncClient:
+    """Login to WUG web UI via form POST.
+    Returns an httpx.AsyncClient with valid ASP.NET session cookies.
+    Caller MUST call await client.aclose() when done."""
+    import re
+    c = httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15)
+
+    # GET login page to extract ASP.NET VIEWSTATE tokens
+    try:
+        r = await c.get(f"{base_url}/NmConsole/")
+    except Exception as e:
+        await c.aclose()
+        raise ValueError(f"WUG web login GET failed: {e}") from e
+
+    def _extract_vs(name):
+        m = re.search(rf'(?:name|id)="{re.escape(name)}"[^>]*value="([^"]*)"', r.text)
+        if not m:
+            m = re.search(rf'value="([^"]*)"[^>]*(?:name|id)="{re.escape(name)}"', r.text)
+        return m.group(1) if m else ""
+
+    form: dict = {
+        "Username": username,
+        "Password": password,
+        "__VIEWSTATE":          _extract_vs("__VIEWSTATE"),
+        "__VIEWSTATEGENERATOR": _extract_vs("__VIEWSTATEGENERATOR"),
+        "__EVENTVALIDATION":    _extract_vs("__EVENTVALIDATION"),
+    }
+    # Common submit button names across WUG versions
+    for btn in ["btnLogin", "ctl00$ContentPlaceHolder1$btnLogin", "LoginButton", "Button1"]:
+        if f'name="{btn}"' in r.text or f'id="{btn}"' in r.text:
+            form[btn] = "Login"
+            break
+
+    resp = await c.post(f"{base_url}/NmConsole/", data=form)
+    logger.info(
+        "WUG web login → HTTP %s  final_url=%s  cookies=%s",
+        resp.status_code, str(resp.url), list(c.cookies.keys()),
+    )
+    return c
+
+
+async def _wug_fetch_via_session(base_url: str, username: str, password: str) -> dict:
+    """Fetch WUG topology using web session cookie auth.
+    Works when the REST API token endpoint is disabled but web login is valid.
+    After form login the ASP.NET session cookie satisfies the same auth middleware
+    that guards the internal REST routes."""
+    client = None
+    try:
+        client = await _wug_session_login(base_url, username, password)
+        hdrs = {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+
+        for api_base in [f"{base_url}/NmConsole/api/v1", f"{base_url}/api/v1"]:
+            try:
+                # Try device groups first (preserves per-location grouping)
+                gr = await client.get(f"{api_base}/device-groups/-1/childGroups", headers=hdrs)
+                if gr.status_code == 200 and "json" in gr.headers.get("content-type", ""):
+                    groups = gr.json().get("data") or []
+                    if groups:
+                        dev_resps = await asyncio.gather(*[
+                            client.get(f"{api_base}/device-groups/{g['id']}/devices?pageSize=500", headers=hdrs)
+                            for g in groups
+                        ], return_exceptions=True)
+                        locations = []
+                        for g, dr in zip(groups, dev_resps):
+                            if isinstance(dr, Exception) or dr.status_code != 200:
+                                continue
+                            devs = dr.json().get("data") or []
+                            if devs:
+                                locations.append(_wug_make_location(g, devs))
+                        if locations:
+                            logger.info("WUG session: %d locations via %s/device-groups", len(locations), api_base)
+                            alerts = [
+                                {"id": d["id"], "device": d["name"], "ip": d["ip"],
+                                 "location": loc["name"], "status": d["status"]}
+                                for loc in locations for d in loc["devices"] if d["alert"]
+                            ]
+                            return {"locations": locations, "alerts": alerts, "source": "live_session"}
+
+                # Flat device list fallback
+                dr = await client.get(f"{api_base}/device?pageSize=500", headers=hdrs)
+                if dr.status_code == 200 and "json" in dr.headers.get("content-type", ""):
+                    devs = dr.json().get("data") or []
+                    if devs:
+                        locations = [_wug_make_location({"id": "all", "name": "All Devices"}, devs)]
+                        logger.info("WUG session: %d devices (flat) via %s/device", len(devs), api_base)
+                        return {"locations": locations, "alerts": [], "source": "live_session"}
+
+            except Exception as ep:
+                logger.debug("WUG session API attempt on %s failed: %s", api_base, ep)
+                continue
+
+        raise ValueError("WUG web session: no device endpoint returned valid JSON")
+    finally:
+        if client:
+            await client.aclose()
+
+
 async def _wug_fetch_topology(url: str, username: str, password: str) -> dict:
-    """Build full topology: device groups as locations, devices inside each."""
+    """Build full WUG topology.
+    Strategy 1 — REST API bearer token (fast, clean).
+    Strategy 2 — web session cookie fallback (when token endpoint is disabled)."""
+    # ── Strategy 1: REST API token ──────────────────────────────────────────────
     try:
         token  = await _wug_get_token(url, username, password)
         groups = await _wug_child_groups(url, token, -1)
 
         locations = []
         if groups:
-            # Build per-group device lists concurrently
             tasks = [_wug_all_devices(url, token, int(g["id"])) for g in groups]
             group_devs = await asyncio.gather(*tasks, return_exceptions=True)
             for g, devs in zip(groups, group_devs):
@@ -1446,29 +1545,26 @@ async def _wug_fetch_topology(url: str, username: str, password: str) -> dict:
                     continue
                 locations.append(_wug_make_location(g, devs))
         else:
-            # No sub-groups — show all devices as one flat location
             all_devs = await _wug_all_devices(url, token, -1)
             if all_devs:
                 locations.append(_wug_make_location({"id": "all", "name": "All Devices"}, all_devs))
 
-        # Build alert list from any down device across all locations
         alerts = [
-            {
-                "id":       d["id"],
-                "device":   d["name"],
-                "ip":       d["ip"],
-                "location": loc["name"],
-                "status":   d["status"],
-            }
-            for loc in locations
-            for d in loc["devices"]
-            if d["alert"]
+            {"id": d["id"], "device": d["name"], "ip": d["ip"],
+             "location": loc["name"], "status": d["status"]}
+            for loc in locations for d in loc["devices"] if d["alert"]
         ]
         return {"locations": locations, "alerts": alerts, "source": "live"}
 
-    except Exception as exc:
-        logger.error("WUG topology fetch failed: %s", exc)
-        return {"locations": [], "alerts": [], "source": "error", "message": str(exc)}
+    except Exception as rest_exc:
+        logger.warning("WUG REST API unavailable (%s) — trying web session fallback", rest_exc)
+
+    # ── Strategy 2: web session fallback ───────────────────────────────────────
+    try:
+        return await _wug_fetch_via_session(url, username, password)
+    except Exception as session_exc:
+        logger.error("WUG web session fallback failed: %s", session_exc)
+        return {"locations": [], "alerts": [], "source": "error", "message": str(session_exc)}
 
 
 async def _wug_background_poller():
@@ -1878,6 +1974,32 @@ async def debug_connectivity():
                     break
             if wug_r.get("working_url"):
                 break
+
+        # ── Web session fallback test ──────────────────────────────────────────
+        if not wug_r.get("working_url"):
+            wug_r["web_session_test"] = "trying"
+            try:
+                client = await _wug_session_login(wug_url, wug_user, wug_pwd)
+                try:
+                    wug_r["web_login_cookies"] = list(client.cookies.keys())
+                    hdrs = {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+                    for api_base in [f"{wug_url}/NmConsole/api/v1", f"{wug_url}/api/v1"]:
+                        dr = await client.get(f"{api_base}/device-groups/-1/childGroups", headers=hdrs)
+                        wug_r[f"session_{api_base.split('/')[-2]}_groups"] = {
+                            "status": dr.status_code,
+                            "content_type": dr.headers.get("content-type",""),
+                            "preview": dr.text[:200],
+                        }
+                        if dr.status_code == 200 and "json" in dr.headers.get("content-type",""):
+                            wug_r["web_session_test"] = "success"
+                            break
+                    else:
+                        wug_r["web_session_test"] = "login_ok_but_no_data"
+                finally:
+                    await client.aclose()
+            except Exception as wse:
+                wug_r["web_session_test"] = f"failed: {wse}"
+
         out["wug"] = wug_r
 
     # ── UniFi ──────────────────────────────────────────────────────────────────
