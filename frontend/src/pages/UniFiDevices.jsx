@@ -98,7 +98,6 @@ function SiteCard({ name, devices, siteId }) {
     <div
       data-testid={`unifi-site-${siteId}`}
       style={{
-        flex: "1 1 0", minWidth: 0,
         display: "flex", flexDirection: "column",
         background: "#070710",
         borderTop: `2px solid ${hasIssue ? "#FF2A2A" : "#1C3040"}`,
@@ -220,7 +219,7 @@ const DEMO_SITES = [
       { id: "n-sw2", name: "USW-24-POE",     type: "poe_switch",   ip: "10.202.1.3",  status: "online",  num_sta: 0  },
       { id: "n-ap1", name: "U6-Pro Lobby",   type: "access_point", ip: "10.202.1.50", status: "online",  num_sta: 12 },
       { id: "n-ap2", name: "U6-Pro Office",  type: "access_point", ip: "10.202.1.51", status: "online",  num_sta: 28 },
-      { id: "n-ap3", name: "U6-LR Whs",      type: "access_point", ip: "10.202.1.52", status: "online",  num_sta: 5  },
+      { id: "n-fw1", name: "Aruba-2930F",    type: "firewall",     ip: "10.202.1.10", status: "online",  num_sta: 0  },
     ],
   },
   {
@@ -248,6 +247,15 @@ const DEMO_SITES = [
       { id: "k-sw1", name: "USW-24-POE",      type: "poe_switch",   ip: "10.202.5.2",  status: "online", num_sta: 0  },
       { id: "k-ap1", name: "U6-Pro Office",   type: "access_point", ip: "10.202.5.50", status: "online", num_sta: 19 },
       { id: "k-ap2", name: "U6-Lite Flr 2",  type: "access_point", ip: "10.202.5.51", status: "online", num_sta: 7  },
+      { id: "k-fw1", name: "Aruba-3810M",    type: "firewall",     ip: "10.202.5.10", status: "online",  num_sta: 0  },
+    ],
+  },
+  {
+    siteId: "canton-whs", name: "Canton WHS",
+    devices: [
+      { id: "cw-gw",  name: "USG",           type: "gateway",      ip: "10.202.6.1",  status: "online", num_sta: 0 },
+      { id: "cw-sw1", name: "USW-16",         type: "switch",       ip: "10.202.6.2",  status: "online", num_sta: 0 },
+      { id: "cw-ap1", name: "U6-Lite Gym",    type: "access_point", ip: "10.202.6.50", status: "online", num_sta: 9 },
     ],
   },
   {
@@ -256,6 +264,22 @@ const DEMO_SITES = [
       { id: "c-gw",  name: "USG",             type: "gateway",      ip: "10.202.4.1",  status: "online", num_sta: 0 },
       { id: "c-sw1", name: "USW-8",            type: "switch",       ip: "10.202.4.2",  status: "online", num_sta: 0 },
       { id: "c-ap1", name: "U6-Lite",          type: "access_point", ip: "10.202.4.50", status: "online", num_sta: 6 },
+    ],
+  },
+  {
+    siteId: "ovid", name: "Ovid",
+    devices: [
+      { id: "o-gw",  name: "USG",             type: "gateway",      ip: "10.202.7.1",  status: "offline", num_sta: 0 },
+      { id: "o-sw1", name: "USW-8",            type: "switch",       ip: "10.202.7.2",  status: "online",  num_sta: 0 },
+      { id: "o-ap1", name: "U6-Lite",          type: "access_point", ip: "10.202.7.50", status: "online",  num_sta: 4 },
+    ],
+  },
+  {
+    siteId: "middlebury", name: "Middlebury",
+    devices: [
+      { id: "mb-gw",  name: "USG",            type: "gateway",      ip: "10.202.8.1",  status: "online", num_sta: 0 },
+      { id: "mb-sw1", name: "USW-8-POE",       type: "poe_switch",   ip: "10.202.8.2",  status: "online", num_sta: 0 },
+      { id: "mb-ap1", name: "U6-Lite",         type: "access_point", ip: "10.202.8.50", status: "online", num_sta: 5 },
     ],
   },
 ];
@@ -273,16 +297,15 @@ export default function UniFiDevices() {
       const res = await axios.get(`${API}/unifi/devices`, { timeout: 8000 });
       const devs = res.data?.devices ?? [];
       if (devs.length) {
-        // Group by controller
-        const byCtrl = {};
+        // Group by site_id (each UniFi site = one location card)
+        const bySite = {};
         devs.forEach(d => {
-          const k = d.controller || "default";
-          (byCtrl[k] = byCtrl[k] || []).push(d);
+          const key  = d.site_id || d.controller || "default";
+          const name = d.site_name || d.controller || key;
+          if (!bySite[key]) bySite[key] = { siteId: key, name, devices: [] };
+          bySite[key].devices.push(d);
         });
-        setSiteCards(Object.entries(byCtrl).map(([ctrl, list]) => ({
-          siteId: ctrl.toLowerCase().replace(/[^a-z0-9]/g, "-"),
-          name: ctrl, devices: list,
-        })));
+        setSiteCards(Object.values(bySite));
         setIsMock(false);
       } else {
         setSiteCards(DEMO_SITES);
@@ -364,14 +387,20 @@ export default function UniFiDevices() {
         )
       )}
 
-      {/* Site topology grid */}
-      <div style={{ flex: 1, overflow: "auto" }}>
+      {/* Site topology grid — 4 columns, wraps to additional rows */}
+      <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         {loading ? (
-          <div style={{ display: "flex", gap: 10 }}>
-            {[...Array(3)].map((_, i) => <div key={i} className="skeleton" style={{ flex: 1, height: 220 }} />)}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+            {[...Array(8)].map((_, i) => <div key={i} className="skeleton" style={{ height: 220 }} />)}
           </div>
         ) : (
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gridAutoRows: siteCards.length > 4 ? "1fr" : "auto",
+            gap: 10,
+            alignItems: "start",
+          }}>
             {siteCards.map(s => <SiteCard key={s.siteId} {...s} />)}
           </div>
         )}

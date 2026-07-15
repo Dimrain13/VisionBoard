@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
-  Bell, Network, Activity, CheckCircle,
+  Bell, Network, Ticket, Activity, CheckCircle,
   ShieldAlert, Wifi, Camera, Monitor, Server, Router
 } from "lucide-react";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";

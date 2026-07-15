@@ -460,24 +460,26 @@ def _fmt_uptime(seconds: int) -> str:
     h = rem // 3600
     return f"{d}d {h}h" if d else f"{h}h"
 
-def _norm_unifi_device(d: dict, label: str) -> dict:
+def _norm_unifi_device(d: dict, label: str, site_id: str = "", site_name: str = "") -> dict:
     type_raw = (d.get("type") or "").lower()
     uptime   = d.get("uptime", 0) or 0
     return {
-        "id":        d.get("_id", str(uuid.uuid4())),
-        "name":      d.get("name") or d.get("hostname") or "Unknown",
-        "model":     d.get("model", ""),
-        "type":      UNIFI_TYPE_MAP.get(type_raw, "device"),
-        "type_raw":  type_raw,
-        "status":    "online" if d.get("state") == 1 else "offline",
-        "ip":        d.get("ip", ""),
-        "mac":       d.get("mac", ""),
-        "uptime":    uptime,
+        "id":         d.get("_id", str(uuid.uuid4())),
+        "name":       d.get("name") or d.get("hostname") or "Unknown",
+        "model":      d.get("model", ""),
+        "type":       UNIFI_TYPE_MAP.get(type_raw, "device"),
+        "type_raw":   type_raw,
+        "status":     "online" if d.get("state") == 1 else "offline",
+        "ip":         d.get("ip", ""),
+        "mac":        d.get("mac", ""),
+        "uptime":     uptime,
         "uptime_str": _fmt_uptime(uptime),
-        "version":   d.get("version", ""),
+        "version":    d.get("version", ""),
         "controller": label,
-        "num_sta":   d.get("num_sta", 0),
-        "num_port":  d.get("num_port", 0),
+        "site_id":    site_id,
+        "site_name":  site_name or site_id,
+        "num_sta":    d.get("num_sta", 0),
+        "num_port":   d.get("num_port", 0),
     }
 
 async def _fetch_unifi_controller(url: str, username: str, password: str, site: str, label: str) -> list:
@@ -533,11 +535,17 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
                 # Auto-discover site name — configured value may differ from controller
                 # Fetch devices from ALL available sites (not just first match)
                 all_sites = []
+                site_desc_map: dict = {}  # site_id → human-readable description
                 try:
                     sites_r = await c.get(f"{url}/api/self/sites")
                     if sites_r.status_code == 200:
-                        all_sites = [sg.get("name") for sg in sites_r.json().get("data", []) if sg.get("name")]
-                        logger.info("UniFi available sites on %s: %s", url, all_sites)
+                        for sg in sites_r.json().get("data", []):
+                            sid  = sg.get("name", "")
+                            desc = sg.get("desc") or sg.get("description") or sid
+                            if sid:
+                                all_sites.append(sid)
+                                site_desc_map[sid] = desc
+                        logger.info("UniFi available sites on %s: %s", url, site_desc_map)
                     else:
                         logger.warning(
                             "UniFi site discovery HTTP %s for %s", sites_r.status_code, url
@@ -563,8 +571,12 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
                     logger.info("UniFi device list for site %s: HTTP %s from %s", s_id, dr.status_code, url)
                     if dr.status_code == 200:
                         site_devs = dr.json().get("data", [])
-                        logger.info("UniFi site %s: %d device(s)", s_id, len(site_devs))
-                        all_devices.extend(site_devs)
+                        s_name    = site_desc_map.get(s_id, s_id)
+                        logger.info("UniFi site %s (%s): %d device(s)", s_id, s_name, len(site_devs))
+                        all_devices.extend(
+                            _norm_unifi_device(d, label, site_id=s_id, site_name=s_name)
+                            for d in site_devs
+                        )
                     else:
                         logger.warning(
                             "UniFi devices HTTP %s from %s site %s — body: %s",
@@ -572,7 +584,7 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
                         )
 
                 logger.info("UniFi %s (%s): %d device(s) total across %d site(s)", label, url, len(all_devices), len(sites_to_fetch))
-                return [_norm_unifi_device(d, label) for d in all_devices]
+                return all_devices
 
             logger.info("UniFi device list: HTTP %s from %s (site=%s)", dr.status_code, url, actual_site)
             if dr.status_code != 200:
@@ -584,7 +596,7 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
 
             devs = dr.json().get("data", [])
             logger.info("UniFi %s (%s): %d device(s) fetched", label, url, len(devs))
-            return [_norm_unifi_device(d, label) for d in devs]
+            return [_norm_unifi_device(d, label, site_id=actual_site) for d in devs]
 
     except Exception as e:
         logger.warning("UniFi controller %s error: %s", url, e)
