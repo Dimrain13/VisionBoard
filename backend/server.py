@@ -1794,7 +1794,7 @@ async def debug_connectivity():
         out["wug"] = {"status": "not_configured"}
     else:
         wug_r: dict = {"url": wug_url}
-        candidate_paths = ["/api/v1/token", "/NmConsole/api/v1/token"]
+        candidate_paths = ["/api/v1/token", "/NmConsole/api/v1/token", "/WhatsUp/api/v1/token", "/nmapi/api/v1/token"]
         for path in candidate_paths:
             token_url = f"{wug_url.rstrip('/')}{path}"
             wug_r[f"tried_{path}"] = token_url
