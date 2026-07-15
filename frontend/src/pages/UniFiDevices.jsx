@@ -205,7 +205,7 @@ function NodeBox({ x, y, nodeW, nodeH, device }) {
       {/* IP address */}
       <text
         x={x + 14 + pillW} y={y + nodeH / 2 + fs2 + 3}
-        fontSize={fs2} fill={isOff ? "#FF4444" : "#1E3448"}
+        fontSize={fs2} fill={isOff ? "#FF4444" : "#2A4A6A"}
         fontFamily="'JetBrains Mono',monospace">
         {(device.ip || "").slice(0, 18)}
       </text>

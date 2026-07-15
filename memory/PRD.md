@@ -93,11 +93,20 @@ Create a dashboard in Python/React to display important IT information at a glan
 - **Demo data**: Realistic device counts (14–68 per site; genDevices helper)
 - **Live data**: Uses `/api/wug/topology`; parent_id from real WUG honored if provided
 
-### UniFi Page (UniFiDevices.jsx) — Updated 2026-07-15
-- Added `firewall` device type (HP Aruba support)
-- Axios timeout 8s (was hanging 35s for unreachable LAN controller)
-- inferParents updated: firewall > gateway > switch > first device as root
-- Cameras distributed across switches (same as APs)
+### UniFi Page (UniFiDevices.jsx) — REDESIGNED 2026-07-16
+- **Location sub-tabs**: [ALL SITES] + one tab per site (8 tabs for 8 locations)
+- **Full topology tree** (left-to-right): GW → Core SW → IDF SW → AP/CAM
+  - Every device is a labeled box with device name, IP, and type pill
+  - Elbow connectors (right-angle SVG paths) show actual uplink relationships
+  - Supports arbitrary tree depth for multi-level IDF switch topologies
+  - Color-coded by type: purple=GW, green=SW, cyan=AP, amber=CAM, red=offline
+- **Auto-cycle** (kiosk mode): cycles ALL SITES → site[0] → site[1] → ... every 8s
+- **ALL SITES tab**: 4-column grid of compact site overview cards (GW+SW+dot endpoints)
+- **Layout algorithm**: Reingold-Tilford-style leaf-row assignment on 1900×900 virtual canvas
+  - Node height dynamically computed from leaf count (fits Pi 1920×1080 screen)
+  - Per-site SVG scales uniformly via viewBox+preserveAspectRatio
+- **Demo fallback**: DEMO_SITES array (8 sites, 116 devices, 2 offline) used when LAN controller unreachable
+- WUG debug endpoint now tests all 4 known WUG token paths (including /WhatsUp/ and /nmapi/)
 
 ### Tickets Page — Per-Location Incident Board (2026-07-15)
 - Completely redesigned from flat list → per-location card grid (4 columns, same layout as WUG)
