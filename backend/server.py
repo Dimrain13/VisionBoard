@@ -568,24 +568,30 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
                 all_devices = []
                 for s_id in sites_to_fetch:
                     s_name = site_desc_map.get(s_id, s_id)
-                    # rest/device returns ALL adopted devices (including offline)
-                    # stat/device only returns currently connected devices
-                    dr = await c.get(f"{url}/api/s/{s_id}/rest/device")
-                    if dr.status_code == 404:
-                        # Fallback to stat/device if rest/device not supported
-                        dr = await c.get(f"{url}/api/s/{s_id}/stat/device")
-                    logger.info("UniFi device list for site %s (%s): HTTP %s", s_id, s_name, dr.status_code)
-                    if dr.status_code == 200:
-                        site_devs = dr.json().get("data", [])
-                        logger.info("UniFi site %s (%s): %d device(s)", s_id, s_name, len(site_devs))
-                        all_devices.extend(
-                            _norm_unifi_device(d, label, site_id=s_id, site_name=s_name)
-                            for d in site_devs
-                        )
-                    else:
+                    try:
+                        # rest/device returns ALL adopted devices (including offline)
+                        # stat/device only returns currently connected devices
+                        dr = await c.get(f"{url}/api/s/{s_id}/rest/device")
+                        if dr.status_code != 200:
+                            # Fallback to stat/device for any non-200 (auth issues, not-found, etc.)
+                            dr = await c.get(f"{url}/api/s/{s_id}/stat/device")
+                        logger.info("UniFi device list for site %s (%s): HTTP %s", s_id, s_name, dr.status_code)
+                        if dr.status_code == 200:
+                            site_devs = dr.json().get("data", [])
+                            logger.info("UniFi site %s (%s): %d device(s)", s_id, s_name, len(site_devs))
+                            all_devices.extend(
+                                _norm_unifi_device(d, label, site_id=s_id, site_name=s_name)
+                                for d in site_devs
+                            )
+                        else:
+                            logger.warning(
+                                "UniFi devices HTTP %s from %s site %s — body: %s",
+                                dr.status_code, url, s_id, dr.text[:200],
+                            )
+                    except Exception as site_ex:
                         logger.warning(
-                            "UniFi devices HTTP %s from %s site %s — body: %s",
-                            dr.status_code, url, s_id, dr.text[:200],
+                            "UniFi site %s (%s) fetch error: %s — skipping",
+                            s_id, s_name, site_ex, exc_info=True,
                         )
 
                 logger.info("UniFi %s (%s): %d device(s) total across %d site(s)", label, url, len(all_devices), len(sites_to_fetch))
