@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
-  Bell, Network, Ticket, Activity, CheckCircle, ArrowRight,
+  Bell, Network, Activity, CheckCircle,
   ShieldAlert, Wifi, Camera, Monitor, Server, Router
 } from "lucide-react";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
@@ -78,23 +78,20 @@ export default function Dashboard() {
   const [summary, setSummary]   = useState(null);
   const [alerts, setAlerts]     = useState([]);
   const [vendors, setVendors]   = useState([]);
-  const [tickets, setTickets]   = useState([]);
   const [sites, setSites]       = useState([]);
   const [loading, setLoading]   = useState(true);
 
   const loadAll = useCallback(async () => {
     try {
       // Load KPI + content endpoints first — show dashboard immediately
-      const [s, a, t, si] = await Promise.all([
+      const [s, a, si] = await Promise.all([
         axios.get(`${API}/dashboard/summary`),
         axios.get(`${API}/alerts`, { params: { acknowledged: false } }),
-        axios.get(`${API}/vivantio/tickets`),
         axios.get(`${API}/sites`),
       ]);
       setSummary(s.data);
       const rawAlerts = a.data.items || [];
       setAlerts(rawAlerts.filter(al => al.severity !== "info").slice(0, 10));
-      setTickets((t.data.tickets || []).slice(0, 5));
       setSites(si.data);
     } catch (e) { console.error("KPI load error:", e); }
     finally { setLoading(false); }
@@ -296,30 +293,6 @@ export default function Dashboard() {
           </div>
 
           {/* Compact Tickets — live from Vivantio */}
-          <div className="card" style={{ height: 180, display: "flex", flexDirection: "column" }}>
-            <div className="card-header">
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Ticket size={14} style={{ color: "#FFB014" }} />
-                INCIDENT QUEUE
-              </span>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto" }}>
-              {tickets.length === 0 ? (
-                <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.3 }}>
-                  <div className="section-label">No Open Tickets</div>
-                </div>
-              ) : tickets.map(t => (
-                <div key={t.id} className="table-row" style={{ display: "flex", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #1C1C24" }}>
-                  <div style={{ width: 3, height: 16, background: PRI_COLOR[t.priority?.toLowerCase()] || PRI_COLOR.low, marginRight: 12, flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: "#D4D4D8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-                    <div style={{ fontSize: 9, color: "#3A3A48" }}>{t.ticket_number || t.id} · {(t.status || "").replace("_", " ")}</div>
-                  </div>
-                  <ArrowRight size={10} style={{ color: "#1C1C24" }} />
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
 

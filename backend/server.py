@@ -531,17 +531,13 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
                 logger.info("UniFi legacy login OK for %s — cookies: %s", url, cookie_names)
 
                 # Auto-discover site name — configured value may differ from controller
-                actual_site = site
+                # Fetch devices from ALL available sites (not just first match)
+                all_sites = []
                 try:
                     sites_r = await c.get(f"{url}/api/self/sites")
                     if sites_r.status_code == 200:
-                        available = [sg.get("name") for sg in sites_r.json().get("data", [])]
-                        logger.info("UniFi available sites on %s: %s", url, available)
-                        if available and site not in available:
-                            actual_site = available[0]
-                            logger.info(
-                                "UniFi: site %r not found, using %r instead", site, actual_site
-                            )
+                        all_sites = [sg.get("name") for sg in sites_r.json().get("data", []) if sg.get("name")]
+                        logger.info("UniFi available sites on %s: %s", url, all_sites)
                     else:
                         logger.warning(
                             "UniFi site discovery HTTP %s for %s", sites_r.status_code, url
@@ -549,7 +545,34 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
                 except Exception as se:
                     logger.debug("UniFi site discovery error for %s: %s", url, se)
 
-                dr = await c.get(f"{url}/api/s/{actual_site}/stat/device")
+                # If configured site found in list use it alone; otherwise fetch from ALL sites
+                if site in all_sites:
+                    sites_to_fetch = [site]
+                elif all_sites:
+                    logger.info(
+                        "UniFi: configured site %r not in available list — fetching all %d sites",
+                        site, len(all_sites)
+                    )
+                    sites_to_fetch = all_sites
+                else:
+                    sites_to_fetch = [site]
+
+                all_devices = []
+                for s_id in sites_to_fetch:
+                    dr = await c.get(f"{url}/api/s/{s_id}/stat/device")
+                    logger.info("UniFi device list for site %s: HTTP %s from %s", s_id, dr.status_code, url)
+                    if dr.status_code == 200:
+                        site_devs = dr.json().get("data", [])
+                        logger.info("UniFi site %s: %d device(s)", s_id, len(site_devs))
+                        all_devices.extend(site_devs)
+                    else:
+                        logger.warning(
+                            "UniFi devices HTTP %s from %s site %s — body: %s",
+                            dr.status_code, url, s_id, dr.text[:200],
+                        )
+
+                logger.info("UniFi %s (%s): %d device(s) total across %d site(s)", label, url, len(all_devices), len(sites_to_fetch))
+                return [_norm_unifi_device(d, label) for d in all_devices]
 
             logger.info("UniFi device list: HTTP %s from %s (site=%s)", dr.status_code, url, actual_site)
             if dr.status_code != 200:
@@ -1195,9 +1218,12 @@ async def _wug_get_token(url: str, username: str, password: str) -> str:
 
     base = url.rstrip("/")
     # Try common WUG token endpoint paths in order
+    # IIS-hosted WUG on Windows: /WhatsUp/api/v1/token is a common virtual-dir name
     candidate_paths = [
         "/api/v1/token",
         "/NmConsole/api/v1/token",
+        "/WhatsUp/api/v1/token",
+        "/nmapi/api/v1/token",
     ]
 
     last_err = None
@@ -1835,10 +1861,15 @@ async def debug_connectivity():
 # ─── Vivantio Ticketing ───────────────────────────────────────────────────────
 
 _vivantio_cache: dict = {"tickets": None, "ts": 0, "max_id": 27400}
+_vivantio_location_map: dict = {}  # {location_id_int: "Location Name"}
 VIVANTIO_CACHE_TTL = 60
 
 VIVANTIO_PRIORITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 VIVANTIO_CLOSED_STATUSES = {"Closed", "Resolved", "Cancelled", "Canceled", "Complete", "Completed"}
+# Only these statuses are shown on the NOC wall (Incidents view)
+VIVANTIO_OPEN_STATUSES = {"Open", "Waiting On User", "Waiting on User", "Waiting On 3rd Party", "Waiting on 3rd Party"}
+# Only show Incident type records
+VIVANTIO_INCIDENT_TYPES = {"Incident", "incident"}
 
 def _normalize_priority(raw: str) -> str:
     if not raw:
@@ -1858,6 +1889,48 @@ async def _vivantio_request(url: str, username: str, password: str, path: str, b
         r = await client.post(f"{url.rstrip('/')}/api/{path}", headers=headers, json=body or {})
         r.raise_for_status()
         return r.json()
+
+
+async def _vivantio_fetch_location_map(url: str, username: str, password: str) -> dict:
+    """Return {location_id: location_name} by querying Vivantio Location API.
+    
+    The Select (list all) endpoint requires admin permissions we may not have.
+    Instead, resolve only the LocationIds that are actually present in the
+    current ticket cache — using SelectById for each unique ID.
+    Caches result in _vivantio_location_map.
+    """
+    global _vivantio_location_map
+    # Collect unique LocationIds from current ticket cache
+    tickets = _vivantio_cache.get("tickets") or []
+    loc_ids = set()
+    for t_raw in tickets:
+        lid = t_raw.get("_location_id")
+        if lid:
+            loc_ids.add(int(lid))
+
+    if not loc_ids:
+        logger.debug("Vivantio location map: no LocationIds in ticket cache yet")
+        return _vivantio_location_map
+
+    mapping = dict(_vivantio_location_map)  # start with existing cache
+    for lid in loc_ids:
+        if lid in mapping:
+            continue  # already resolved
+        try:
+            data = await _vivantio_request(url, username, password, f"Location/SelectById/{lid}")
+            if data.get("Found"):
+                rec  = data.get("Item") or data.get("Result") or {}
+                name = (rec.get("Name") or rec.get("FullPath") or rec.get("Description") or "")
+                if name:
+                    mapping[lid] = name.strip()
+                    logger.info("Vivantio: location %d → %r", lid, mapping[lid])
+        except Exception as e:
+            logger.debug("Vivantio Location/SelectById/%d failed: %s", lid, e)
+
+    if mapping != _vivantio_location_map:
+        logger.info("Vivantio location map updated: %s", {k: v for k, v in list(mapping.items())[:10]})
+    _vivantio_location_map = mapping
+    return mapping
 
 
 async def _vivantio_find_max_id(url: str, username: str, password: str, start: int) -> int:
@@ -1900,24 +1973,44 @@ async def _vivantio_fetch_tickets(url: str, username: str, password: str) -> lis
     all_tickets = raw.get("Results", []) if isinstance(raw, dict) else []
 
     active = []
-    for t in all_tickets:
+    for idx, t in enumerate(all_tickets):
         if not isinstance(t, dict):
             continue
-        if t.get("StatusType") == 4:
+        # Only Incidents
+        rec_type = (t.get("RecordTypeNameSingular") or t.get("RecordTypeName") or "Incident").strip()
+        if rec_type.lower() not in ("incident",):
             continue
-        if t.get("StatusName") in VIVANTIO_CLOSED_STATUSES:
+        # Only Open or Waiting On User
+        status_name = (t.get("StatusName") or "").strip()
+        if status_name not in VIVANTIO_OPEN_STATUSES:
             continue
+        # Log available fields from first PASSING ticket to diagnose location field name
+        if not active:
+            logger.info("Vivantio first passing ticket fields: %s", sorted(t.keys()))
+
         priority_raw = t.get("PriorityName", "") or ""
+        # Resolve caller's site location via LocationId → location map
+        # (LocationId on a ticket = the physical site of the requester/caller)
+        loc_id   = t.get("LocationId")
+        location = _vivantio_location_map.get(int(loc_id)) if loc_id else None
+        if not location:
+            # Fallback: log the LocationId so we can diagnose missing mapping
+            if loc_id and not _vivantio_location_map:
+                logger.debug("Vivantio location map empty — LocationId %s unresolvable", loc_id)
+            location = "Unknown"
         active.append({
             "id":           str(t.get("Id", "")),
-            "ticket_number": str(t.get("DisplayId") or t.get("Id", "")),
+            "display_id":   str(t.get("DisplayId") or t.get("Id", "")),
             "title":        t.get("Title", ""),
-            "status":       t.get("StatusName", "open"),
+            "status":       status_name,
             "priority":     _normalize_priority(priority_raw),
             "priority_raw": priority_raw,
-            "assignee":     t.get("TakenByName") or t.get("OwnerName") or "",
+            "assigned_to":  t.get("TakenByName") or t.get("OwnerName") or "",
+            "group":        t.get("TeamName") or t.get("GroupName") or "",
             "category":     t.get("CategoryLineage", ""),
-            "type":         t.get("RecordTypeNameSingular", "Ticket"),
+            "type":         rec_type,
+            "location":     location,
+            "_location_id": loc_id,   # raw ID kept for location map resolution
             "opened":       t.get("OpenDate", ""),
             "updated":      t.get("LastModifiedDate", ""),
         })
@@ -1930,8 +2023,11 @@ async def _vivantio_fetch_tickets(url: str, username: str, password: str) -> lis
 
 
 async def background_vivantio_warmer():
-    """Warm Vivantio ticket cache on startup and refresh every 60s."""
+    """Warm Vivantio ticket cache on startup and refresh every 60s.
+    Also fetches location map once (refreshed every 10 mins) so tickets
+    can resolve LocationId → site name (Novi HQ, Canton, etc.)."""
     await asyncio.sleep(8)
+    loc_refresh_counter = 0
     while True:
         try:
             settings = load_settings()
@@ -1939,10 +2035,28 @@ async def background_vivantio_warmer():
             username = settings.get("vivantio_api_key", "")
             password = settings.get("vivantio_password", "")
             if url and username and password:
+                # Step 1: fetch tickets (location may be "Unknown" if map not yet built)
                 tickets = await _vivantio_fetch_tickets(url, username, password)
                 _vivantio_cache["tickets"] = tickets
                 _vivantio_cache["ts"]      = time.time()
-                logger.info(f"Vivantio cache refreshed: {len(tickets)} active tickets")
+                logger.info("Vivantio cache refreshed: %d active tickets", len(tickets))
+
+                # Step 2: resolve LocationIds (uses the ticket cache to know which IDs to fetch)
+                if not _vivantio_location_map or loc_refresh_counter % 10 == 0:
+                    await _vivantio_fetch_location_map(url, username, password)
+                loc_refresh_counter += 1
+
+                # Step 3: back-fill any "Unknown" locations now that map is populated
+                if _vivantio_location_map:
+                    updated = False
+                    for t in _vivantio_cache["tickets"]:
+                        if t.get("location") == "Unknown" and t.get("_location_id"):
+                            resolved = _vivantio_location_map.get(int(t["_location_id"]))
+                            if resolved:
+                                t["location"] = resolved
+                                updated = True
+                    if updated:
+                        logger.info("Vivantio: back-filled location names in ticket cache")
         except Exception as e:
             logger.warning(f"Vivantio warmer error: {e}")
         await asyncio.sleep(60)
@@ -1977,15 +2091,21 @@ async def get_vivantio_tickets():
 def _vivantio_summary(tickets: list, configured: bool) -> dict:
     by_priority = {}
     by_status   = {}
+    by_location: dict = {}
     for t in tickets:
         by_priority[t["priority"]] = by_priority.get(t["priority"], 0) + 1
         by_status[t["status"]]     = by_status.get(t["status"], 0) + 1
+        loc = t.get("location") or "Unknown"
+        if loc not in by_location:
+            by_location[loc] = []
+        by_location[loc].append(t)
     return {
-        "configured":  configured,
-        "tickets":     tickets,
-        "total":       len(tickets),
-        "by_priority": by_priority,
-        "by_status":   by_status,
+        "configured":   configured,
+        "tickets":      tickets,
+        "total":        len(tickets),
+        "by_priority":  by_priority,
+        "by_status":    by_status,
+        "by_location":  by_location,
     }
 
 

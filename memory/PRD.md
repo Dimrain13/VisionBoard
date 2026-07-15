@@ -99,7 +99,13 @@ Create a dashboard in Python/React to display important IT information at a glan
 - inferParents updated: firewall > gateway > switch > first device as root
 - Cameras distributed across switches (same as APs)
 
-### WUG REST API Fix (2026-07-15)
+### Tickets Page — Per-Location Incident Board (2026-07-15)
+- Completely redesigned from flat list → per-location card grid (4 columns, same layout as WUG)
+- Shows ONLY Incidents with status Open or "Waiting On User"
+- Groups by caller's physical location via `LocationId` → Vivantio Location API resolution
+- Location map built via `Location/SelectById/{id}` (list-all requires admin, per-ID works fine)
+- Locations confirmed: Novi, Canton, Constantine, Middlebury (IDs 1,9,4,5)
+- Dashboard compact INCIDENT QUEUE panel removed
 - `_wug_get_token` now tries both `/api/v1/token` AND `/NmConsole/api/v1/token` automatically
 - Caches the working path prefix so all subsequent `_wug_get` calls use the same prefix
 - Full error logging: HTTP status, content-type, redirect target, and raw body preview on any failure
