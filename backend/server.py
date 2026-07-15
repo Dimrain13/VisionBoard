@@ -1252,30 +1252,37 @@ async def _wug_get_token(url: str, username: str, password: str) -> str:
     # Port-9644 base URL (scheme + host only, port 9644)
     base_9644 = urlunparse(parsed._replace(netloc=f"{parsed.hostname}:9644")) if not has_port else None
 
-    # Build ordered candidate list:
-    #   1. Port-9644 paths first (most common WUG default)
-    #   2. Then the configured-URL paths as fallback
-    candidate_urls = []
-    if base_9644:
-        candidate_urls += [
-            f"{base_9644}/api/v1/token",
+    # Build ordered candidate list.
+    # Each entry is (url, body_kwargs) so we can vary both path and body format.
+    # WUG OAuth2 requires client_id=WhatsUpGold in many installations.
+    def _body_variants(u):
+        return [
+            # Variant A: form-encoded with client_id (most common WUG requirement)
+            (u, dict(data={"grant_type": "password", "username": username,
+                           "password": password, "client_id": "WhatsUpGold"},
+                     headers={"Content-Type": "application/x-www-form-urlencoded"})),
+            # Variant B: standard OAuth2 without client_id
+            (u, dict(data={"grant_type": "password", "username": username,
+                           "password": password},
+                     headers={"Content-Type": "application/x-www-form-urlencoded"})),
+            # Variant C: JSON body with capital fields (WUG 2020+ some builds)
+            (u, dict(json={"Username": username, "Password": password, "TokenLifetime": 86400},
+                     headers={})),
         ]
-    # Configured-URL paths (covers cases where admin routed API through IIS reverse-proxy)
-    candidate_urls += [
-        f"{base}/api/v1/token",
-        f"{base}/NmConsole/api/v1/token",
-    ]
+
+    candidates = []
+    if base_9644:
+        candidates += _body_variants(f"{base_9644}/api/v1/token")
+    candidates += _body_variants(f"{base}/NmConsole/api/v1/token")
+    candidates += _body_variants(f"{base}/api/v1/token")
+    candidates += _body_variants(f"{base}/NmConsole/api/v1.0/token")
 
     last_err = None
-    for token_url in candidate_urls:
+    for token_url, req_kwargs in candidates:
         logger.info("WUG: trying token endpoint %s (user=%s)", token_url, username)
         try:
             async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=False) as client:
-                resp = await client.post(
-                    token_url,
-                    data={"grant_type": "password", "username": username, "password": password},
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
+                resp = await client.post(token_url, **req_kwargs)
 
             ct = resp.headers.get("content-type", "")
             logger.info("WUG token response from %s: HTTP %s  content-type=%s", token_url, resp.status_code, ct)
@@ -1830,31 +1837,47 @@ async def debug_connectivity():
         if _base_9644:
             candidate_token_urls.append((_base_9644 + "/api/v1/token",      ":9644/api/v1/token"))
         candidate_token_urls += [
-            (wug_url.rstrip("/") + "/api/v1/token",          "/api/v1/token"),
-            (wug_url.rstrip("/") + "/NmConsole/api/v1/token", "/NmConsole/api/v1/token"),
+            (wug_url.rstrip("/") + "/NmConsole/api/v1/token",   "/NmConsole/api/v1/token"),
+            (wug_url.rstrip("/") + "/api/v1/token",             "/api/v1/token"),
+            (wug_url.rstrip("/") + "/NmConsole/api/v1.0/token", "/NmConsole/api/v1.0/token"),
+        ]
+
+        # Try two body formats: with client_id (required by most WUG installations) and without
+        _body_formats = [
+            {"data": {"grant_type": "password", "username": wug_user, "password": wug_pwd,
+                      "client_id": "WhatsUpGold"},
+             "headers": {"Content-Type": "application/x-www-form-urlencoded"}},
+            {"data": {"grant_type": "password", "username": wug_user, "password": wug_pwd},
+             "headers": {"Content-Type": "application/x-www-form-urlencoded"}},
+            {"json": {"Username": wug_user, "Password": wug_pwd, "TokenLifetime": 86400},
+             "headers": {}},
         ]
 
         for token_url, label in candidate_token_urls:
             wug_r[f"tried_{label}"] = token_url
-            try:
-                async with httpx.AsyncClient(verify=False, timeout=10, follow_redirects=False) as c:
-                    r = await c.post(
-                        token_url,
-                        data={"grant_type": "password", "username": wug_user, "password": wug_pwd},
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
-                    )
-                wug_r[label] = {
-                    "http_status":  r.status_code,
-                    "content_type": r.headers.get("content-type", ""),
-                    "redirect_to":  r.headers.get("location") if r.status_code in (301,302,303,307,308) else None,
-                    "body_preview": r.text[:300],
-                    "token_ok":     bool("json" in r.headers.get("content-type","") and r.status_code==200 and r.json().get("access_token")),
-                }
-                if wug_r[label]["token_ok"]:
-                    wug_r["working_url"] = token_url
+            for body_fmt in _body_formats:
+                try:
+                    async with httpx.AsyncClient(verify=False, timeout=10, follow_redirects=False) as c:
+                        r = await c.post(token_url, **body_fmt)
+                    token_ok = bool("json" in r.headers.get("content-type","") and r.status_code==200 and r.json().get("access_token"))
+                    wug_r[label] = {
+                        "http_status":  r.status_code,
+                        "content_type": r.headers.get("content-type", ""),
+                        "redirect_to":  r.headers.get("location") if r.status_code in (301,302,303,307,308) else None,
+                        "body_preview": r.text[:300],
+                        "token_ok":     token_ok,
+                    }
+                    if token_ok:
+                        wug_r["working_url"] = token_url
+                        break
+                    if r.status_code != 404:
+                        break  # non-404 means the path exists, try next body format only
+                    break  # 404 — move to next URL candidate
+                except Exception as e:
+                    wug_r[label] = {"error": str(e)}
                     break
-            except Exception as e:
-                wug_r[label] = {"error": str(e)}
+            if wug_r.get("working_url"):
+                break
         out["wug"] = wug_r
 
     # ── UniFi ──────────────────────────────────────────────────────────────────
