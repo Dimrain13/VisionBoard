@@ -1979,24 +1979,43 @@ async def debug_connectivity():
         if not wug_r.get("working_url"):
             wug_r["web_session_test"] = "trying"
             try:
-                client = await _wug_session_login(wug_url, wug_user, wug_pwd)
-                try:
-                    wug_r["web_login_cookies"] = list(client.cookies.keys())
-                    hdrs = {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
-                    for api_base in [f"{wug_url}/NmConsole/api/v1", f"{wug_url}/api/v1"]:
-                        dr = await client.get(f"{api_base}/device-groups/-1/childGroups", headers=hdrs)
-                        wug_r[f"session_{api_base.split('/')[-2]}_groups"] = {
-                            "status": dr.status_code,
-                            "content_type": dr.headers.get("content-type",""),
-                            "preview": dr.text[:200],
+                async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+                    # Step 1: GET login page — expose HTML so we can see if it's SPA or WebForms
+                    login_page = await c.get(f"{wug_url}/NmConsole/")
+                    page_text = login_page.text
+                    wug_r["login_page_status"] = login_page.status_code
+                    wug_r["login_page_preview"] = page_text[:600]
+                    wug_r["is_spa"] = ("bundle.js" in page_text or "app.js" in page_text
+                                       or "<div id=" in page_text and "__VIEWSTATE" not in page_text)
+
+                    # Step 2: probe candidate auth endpoints (React SPA APIs use different paths)
+                    auth_probes = {
+                        "NmConsole/api/v1/auth/token":   f"{wug_url}/NmConsole/api/v1/auth/token",
+                        "NmConsole/api/v1/auth/login":   f"{wug_url}/NmConsole/api/v1/auth/login",
+                        "NmConsole/api/v1/users/current":f"{wug_url}/NmConsole/api/v1/users/current",
+                        "NmConsole/api/v1/":             f"{wug_url}/NmConsole/api/v1/",
+                    }
+                    for label, probe_url in auth_probes.items():
+                        pr = await c.post(probe_url,
+                                         json={"username": wug_user, "password": wug_pwd},
+                                         headers={"Accept": "application/json",
+                                                  "Content-Type": "application/json"})
+                        wug_r[f"probe_{label}"] = {
+                            "status": pr.status_code,
+                            "ct":     pr.headers.get("content-type",""),
+                            "body":   pr.text[:300],
                         }
-                        if dr.status_code == 200 and "json" in dr.headers.get("content-type",""):
-                            wug_r["web_session_test"] = "success"
+                        if pr.status_code == 200 and "json" in pr.headers.get("content-type",""):
+                            wug_r["working_auth_url"] = probe_url
                             break
-                    else:
-                        wug_r["web_session_test"] = "login_ok_but_no_data"
-                finally:
-                    await client.aclose()
+
+                    # Step 3: also try GET on each probe path to find method hints
+                    for label, probe_url in list(auth_probes.items())[:2]:
+                        gr = await c.get(probe_url, headers={"Accept": "application/json"})
+                        wug_r[f"GET_{label}"] = {"status": gr.status_code, "body": gr.text[:150]}
+
+                wug_r["web_login_cookies"] = []
+                wug_r["web_session_test"] = "probed"
             except Exception as wse:
                 wug_r["web_session_test"] = f"failed: {wse}"
 
