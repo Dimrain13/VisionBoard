@@ -1240,18 +1240,34 @@ async def _wug_get_token(url: str, username: str, password: str) -> str:
         return cached["token"]
 
     base = url.rstrip("/")
-    # Try common WUG token endpoint paths in order
-    # IIS-hosted WUG on Windows: /WhatsUp/api/v1/token is a common virtual-dir name
-    candidate_paths = [
-        "/api/v1/token",
-        "/NmConsole/api/v1/token",
-        "/WhatsUp/api/v1/token",
-        "/nmapi/api/v1/token",
+
+    # Build the list of candidate token URLs to try.
+    # WUG REST API runs on port 9644 by default (separate from the IIS web-UI port 443).
+    # If the configured URL already includes a port we respect it; otherwise we also
+    # try the same host on :9644 automatically.
+    from urllib.parse import urlparse, urlunparse
+    parsed   = urlparse(base)
+    has_port = parsed.port is not None   # True if user already put :9644 in settings
+
+    # Port-9644 base URL (scheme + host only, port 9644)
+    base_9644 = urlunparse(parsed._replace(netloc=f"{parsed.hostname}:9644")) if not has_port else None
+
+    # Build ordered candidate list:
+    #   1. Port-9644 paths first (most common WUG default)
+    #   2. Then the configured-URL paths as fallback
+    candidate_urls = []
+    if base_9644:
+        candidate_urls += [
+            f"{base_9644}/api/v1/token",
+        ]
+    # Configured-URL paths (covers cases where admin routed API through IIS reverse-proxy)
+    candidate_urls += [
+        f"{base}/api/v1/token",
+        f"{base}/NmConsole/api/v1/token",
     ]
 
     last_err = None
-    for path in candidate_paths:
-        token_url = f"{base}{path}"
+    for token_url in candidate_urls:
         logger.info("WUG: trying token endpoint %s (user=%s)", token_url, username)
         try:
             async with httpx.AsyncClient(verify=False, timeout=15, follow_redirects=False) as client:
@@ -1262,22 +1278,22 @@ async def _wug_get_token(url: str, username: str, password: str) -> str:
                 )
 
             ct = resp.headers.get("content-type", "")
-            logger.info("WUG token response from %s: HTTP %s  content-type=%s", path, resp.status_code, ct)
+            logger.info("WUG token response from %s: HTTP %s  content-type=%s", token_url, resp.status_code, ct)
 
             # Expose redirect targets
             if resp.status_code in (301, 302, 303, 307, 308):
                 redir = resp.headers.get("location", "<no Location header>")
-                logger.error("WUG %s redirected → %s", path, redir)
+                logger.error("WUG %s redirected → %s", token_url, redir)
                 last_err = ValueError(f"WUG token redirected to {redir!r} — SSO wall?")
                 continue
 
             if resp.status_code == 404:
-                logger.info("WUG 404 on %s — trying next path", path)
-                last_err = ValueError(f"WUG 404 on {path}")
+                logger.info("WUG 404 on %s — trying next candidate", token_url)
+                last_err = ValueError(f"WUG 404 on {token_url}")
                 continue
 
             if resp.status_code != 200:
-                logger.error("WUG token HTTP %s on %s — body: %s", resp.status_code, path, resp.text[:500])
+                logger.error("WUG token HTTP %s on %s — body: %s", resp.status_code, token_url, resp.text[:500])
                 last_err = ValueError(f"WUG HTTP {resp.status_code}: {resp.text[:200]}")
                 continue
 
@@ -1285,23 +1301,26 @@ async def _wug_get_token(url: str, username: str, password: str) -> str:
             if "json" not in ct:
                 logger.error(
                     "WUG token is not JSON (HTTP %s, ct=%r) on %s — body: %s",
-                    resp.status_code, ct, path, resp.text[:500]
+                    resp.status_code, ct, token_url, resp.text[:500]
                 )
-                last_err = ValueError(f"WUG non-JSON on {path} (ct={ct!r}): {resp.text[:200]}")
+                last_err = ValueError(f"WUG non-JSON on {token_url} (ct={ct!r}): {resp.text[:200]}")
                 continue
 
             data  = resp.json()
             token = data.get("access_token")
             if not token:
-                last_err = ValueError(f"WUG response missing access_token on {path}: {data}")
+                last_err = ValueError(f"WUG response missing access_token on {token_url}: {data}")
                 continue
 
+            # Store the full API base URL (including :9644 if that's what worked)
+            # e.g. "https://wug-mmpa.mimilk.com:9644/api/v1/token" → api_base = "https://wug-mmpa.mimilk.com:9644/api/v1"
+            api_base = token_url[: token_url.rfind("/token")]
             _wug_token_cache[url] = {
-                "token": token,
+                "token":      token,
                 "expires_at": now + data.get("expires_in", 86399),
-                "api_prefix": path.replace("/token", ""),  # e.g. /api/v1 or /NmConsole/api/v1
+                "api_base":   api_base,   # full base URL used for all subsequent calls
             }
-            logger.info("WUG token acquired via %s (expires_in=%ss)", path, data.get("expires_in", 86399))
+            logger.info("WUG token acquired via %s (api_base=%s, expires_in=%ss)", token_url, api_base, data.get("expires_in", 86399))
             return token
 
         except (ValueError,) as e:
@@ -1318,12 +1337,12 @@ async def _wug_get_token(url: str, username: str, password: str) -> str:
 
 async def _wug_get(url: str, path: str, token: str, params: dict | None = None) -> dict:
     """Authenticated GET against the WUG REST API.
-    Uses the same api_prefix that was discovered when acquiring the token."""
-    cached = _wug_token_cache.get(url, {})
-    prefix = cached.get("api_prefix", "/api/v1")  # default to /api/v1 if not yet discovered
+    Uses the api_base discovered when acquiring the token (may include :9644 port)."""
+    cached   = _wug_token_cache.get(url, {})
+    api_base = cached.get("api_base") or f"{url.rstrip('/')}/api/v1"
     async with httpx.AsyncClient(verify=False, timeout=20) as client:
         resp = await client.get(
-            f"{url.rstrip('/')}{prefix}/{path.lstrip('/')}",
+            f"{api_base}/{path.lstrip('/')}",
             headers={"Authorization": f"Bearer {token}"},
             params=params or {},
         )
@@ -1800,10 +1819,23 @@ async def debug_connectivity():
         out["wug"] = {"status": "not_configured"}
     else:
         wug_r: dict = {"url": wug_url}
-        candidate_paths = ["/api/v1/token", "/NmConsole/api/v1/token", "/WhatsUp/api/v1/token", "/nmapi/api/v1/token"]
-        for path in candidate_paths:
-            token_url = f"{wug_url.rstrip('/')}{path}"
-            wug_r[f"tried_{path}"] = token_url
+
+        # Build candidate full token URLs: try :9644 (WUG default REST port) first, then :443
+        from urllib.parse import urlparse, urlunparse
+        _p = urlparse(wug_url.rstrip("/"))
+        _has_port = _p.port is not None
+        _base_9644 = urlunparse(_p._replace(netloc=f"{_p.hostname}:9644")) if not _has_port else None
+
+        candidate_token_urls = []
+        if _base_9644:
+            candidate_token_urls.append((_base_9644 + "/api/v1/token",      ":9644/api/v1/token"))
+        candidate_token_urls += [
+            (wug_url.rstrip("/") + "/api/v1/token",          "/api/v1/token"),
+            (wug_url.rstrip("/") + "/NmConsole/api/v1/token", "/NmConsole/api/v1/token"),
+        ]
+
+        for token_url, label in candidate_token_urls:
+            wug_r[f"tried_{label}"] = token_url
             try:
                 async with httpx.AsyncClient(verify=False, timeout=10, follow_redirects=False) as c:
                     r = await c.post(
@@ -1811,18 +1843,18 @@ async def debug_connectivity():
                         data={"grant_type": "password", "username": wug_user, "password": wug_pwd},
                         headers={"Content-Type": "application/x-www-form-urlencoded"},
                     )
-                wug_r[path] = {
+                wug_r[label] = {
                     "http_status":  r.status_code,
                     "content_type": r.headers.get("content-type", ""),
                     "redirect_to":  r.headers.get("location") if r.status_code in (301,302,303,307,308) else None,
                     "body_preview": r.text[:300],
                     "token_ok":     bool("json" in r.headers.get("content-type","") and r.status_code==200 and r.json().get("access_token")),
                 }
-                if wug_r[path]["token_ok"]:
-                    wug_r["working_path"] = path
+                if wug_r[label]["token_ok"]:
+                    wug_r["working_url"] = token_url
                     break
             except Exception as e:
-                wug_r[path] = {"error": str(e)}
+                wug_r[label] = {"error": str(e)}
         out["wug"] = wug_r
 
     # ── UniFi ──────────────────────────────────────────────────────────────────
