@@ -567,11 +567,16 @@ async def _fetch_unifi_controller(url: str, username: str, password: str, site: 
 
                 all_devices = []
                 for s_id in sites_to_fetch:
-                    dr = await c.get(f"{url}/api/s/{s_id}/stat/device")
-                    logger.info("UniFi device list for site %s: HTTP %s from %s", s_id, dr.status_code, url)
+                    s_name = site_desc_map.get(s_id, s_id)
+                    # rest/device returns ALL adopted devices (including offline)
+                    # stat/device only returns currently connected devices
+                    dr = await c.get(f"{url}/api/s/{s_id}/rest/device")
+                    if dr.status_code == 404:
+                        # Fallback to stat/device if rest/device not supported
+                        dr = await c.get(f"{url}/api/s/{s_id}/stat/device")
+                    logger.info("UniFi device list for site %s (%s): HTTP %s", s_id, s_name, dr.status_code)
                     if dr.status_code == 200:
                         site_devs = dr.json().get("data", [])
-                        s_name    = site_desc_map.get(s_id, s_id)
                         logger.info("UniFi site %s (%s): %d device(s)", s_id, s_name, len(site_devs))
                         all_devices.extend(
                             _norm_unifi_device(d, label, site_id=s_id, site_name=s_name)

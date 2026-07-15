@@ -77,63 +77,59 @@ const MOCK = {
 
 // ── Layout helpers ─────────────────────────────────────────────────────────────
 
-const RING_BASE = 32;   // radius of innermost ring (ring 1 — root sits at center)
+const RING_BASE = 30;   // radius of innermost ring
 const RING_STEP = 24;   // additional radius per ring
-const MIN_GAP   = 20;   // min arc-distance between adjacent device dots
+const MIN_GAP   = 18;   // min arc-gap between adjacent dots
 
 function ringR(idx)   { return RING_BASE + idx * RING_STEP; }
 function ringCap(idx) { return Math.max(6, Math.floor(2 * Math.PI * ringR(idx) / MIN_GAP)); }
 
 /**
- * Place devices in concentric rings centered at (cx, cy).
- * Root device (no parent_id) is placed at the center.
- * All others fill rings 1, 2, 3… ordered by: offline first, then online.
+ * Returns { nodes, viewR }.
+ * All positions in CENTERED coordinates — root at (0,0).
+ * ViewR is computed tightly from the outermost ring actually used.
  */
-function layoutDevices(devices, cx, cy) {
-  if (!devices?.length) return [];
+function buildLayout(devices) {
+  if (!devices?.length) return { nodes: [], viewR: 40 };
 
-  const roots   = devices.filter(d => !d.parent_id);
-  const offline = devices.filter(d => d.parent_id && d.status === "down");
-  const warning = devices.filter(d => d.parent_id && d.status === "warning");
-  const online  = devices.filter(d => d.parent_id && !["down", "warning"].includes(d.status));
+  const root   = { ...devices[0], x: 0, y: 0 };
+  const others = devices.slice(1);
 
-  const result = [];
+  // Sort: offline first so they appear in inner rings and stay visible
+  others.sort((a, b) => {
+    const rank = d => (d.status === "down" ? 0 : d.status === "warning" ? 1 : 2);
+    return rank(a) - rank(b);
+  });
 
-  // Root at center
-  if (roots.length === 1) {
-    result.push({ ...roots[0], x: cx, y: cy });
-  } else {
-    roots.forEach((r, i) => {
-      const a = (2 * Math.PI * i / roots.length) - Math.PI / 2;
-      result.push({ ...r, x: cx + 16 * Math.cos(a), y: cy + 16 * Math.sin(a) });
-    });
+  const nodes = [root];
+  let ring = 1, qi = 0;
+  while (qi < others.length) {
+    const cap   = ringCap(ring);
+    const r     = ringR(ring);
+    const count = Math.min(cap, others.length - qi);
+    for (let i = 0; i < count; i++) {
+      const angle = (2 * Math.PI * i) / count - Math.PI / 2;
+      nodes.push({
+        ...others[qi++],
+        x: r * Math.cos(angle),
+        y: r * Math.sin(angle),
+      });
+    }
+    ring++;
+    if (ring > 12) break;
   }
 
-  // Non-root devices in concentric rings
-  const queue = [...offline, ...warning, ...online];
-  let ring = 1, pos = 0, cap = ringCap(1);
-  for (const dev of queue) {
-    if (pos >= cap) { ring++; pos = 0; cap = ringCap(ring); }
-    const r = ringR(ring);
-    const a = (2 * Math.PI * pos / cap) - Math.PI / 2;
-    result.push({ ...dev, x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
-    pos++;
-  }
-
-  return result;
+  const viewR = ringR(ring - 1) + 14; // 14px padding outside outermost ring
+  return { nodes, viewR };
 }
 
 // ── SiteCard ──────────────────────────────────────────────────────────────────
 
-const SVGW = 460, SVGH = 340;
-const CX = SVGW / 2, CY = SVGH / 2 + 8;
-const DEV_R = 6;   // standard device dot radius
-const ROOT_R = 9;  // root (gateway/firewall) dot radius
+const DEV_R  = 5.5;  // device dot radius
+const ROOT_R = 9;    // root node radius
 
 function SiteCard({ loc }) {
-  const nodes    = layoutDevices(loc.devices, CX, CY);
-  const byId     = {};
-  nodes.forEach(n => (byId[n.id] = n));
+  const { nodes, viewR } = buildLayout(loc.devices);
 
   const total    = loc.devices.length;
   const downCnt  = loc.devices.filter(d => d.status === "down").length;
@@ -141,6 +137,8 @@ function SiteCard({ loc }) {
   const hasIssue = downCnt > 0;
   const hasWarn  = warnCnt > 0;
   const bc       = hasIssue ? "#FF2A2A" : hasWarn ? "#FFB014" : "#00FF66";
+
+  const root = nodes[0];
 
   return (
     <div data-testid={`wug-card-${loc.id}`} style={{
@@ -172,95 +170,63 @@ function SiteCard({ loc }) {
           )}
           <div style={{
             width: 7, height: 7, borderRadius: "50%",
-            background: bc,
-            boxShadow: `0 0 6px ${bc}88`,
-            flexShrink: 0,
+            background: bc, boxShadow: `0 0 6px ${bc}88`, flexShrink: 0,
           }} />
         </div>
       </div>
 
-      {/* SVG scatter plot */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-        <svg viewBox={`0 0 ${SVGW} ${SVGH}`}
-          style={{ width: "100%", height: "100%", display: "block" }}>
-
-          <defs>
-            <style>{`
-              @keyframes wugdot-pulse {
-                0%, 100% { opacity: 0.15; }
-                50%       { opacity: 0.9; }
-              }
-            `}</style>
-          </defs>
-
-          {/* Background */}
-          <rect width={SVGW} height={SVGH} fill="#040410" />
-
-          {/* Faint concentric ring guides */}
-          {[1, 2, 3, 4, 5, 6].map(i => (
-            <circle key={i} cx={CX} cy={CY} r={ringR(i)}
-              fill="none" stroke="#0C1428" strokeWidth="0.6" strokeDasharray="2 4" />
+      {/* SVG — centered coordinate system, viewBox sized to actual content */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 4 }}>
+        <svg
+          viewBox={`${-viewR} ${-viewR} ${viewR * 2} ${viewR * 2}`}
+          style={{ width: "100%", height: "100%", display: "block" }}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          {/* Ring guides */}
+          {[1, 2, 3, 4, 5, 6, 7].map(i => (
+            <circle key={i} cx={0} cy={0} r={ringR(i)}
+              fill="none" stroke="#0C1428" strokeWidth="0.5" strokeDasharray="2 5" />
           ))}
 
-          {/* Connection lines: parent → child */}
-          {nodes.map(dev => {
-            if (!dev.parent_id) return null;
-            const par = byId[dev.parent_id];
-            if (!par) return null;
+          {/* Spoke lines: center → every non-root device */}
+          {nodes.slice(1).map(dev => {
             const isDown = dev.status === "down";
             const isWarn = dev.status === "warning";
             return (
               <line key={`ln-${dev.id}`}
-                x1={par.x} y1={par.y} x2={dev.x} y2={dev.y}
-                stroke={isDown ? "#FF3030" : isWarn ? "#FFB01480" : "#0E2A50"}
-                strokeWidth={isDown ? 0.9 : 0.55}
-                opacity={isDown ? 0.7 : 0.85}
+                x1={0} y1={0} x2={dev.x} y2={dev.y}
+                stroke={isDown ? "#FF3030" : isWarn ? "#FFB014" : "#0E2A50"}
+                strokeWidth={isDown ? 0.8 : 0.5}
+                opacity={isDown ? 0.70 : 0.85}
               />
             );
           })}
 
           {/* Device dots */}
-          {nodes.map(dev => {
-            const isRoot  = !dev.parent_id;
-            const isDown  = dev.status === "down";
-            const isWarn  = dev.status === "warning";
-            const sc      = STATUS_COLOR[dev.status] || STATUS_COLOR.unknown;
-            const tc      = TYPE_CHIP[dev.type] || TYPE_CHIP.device;
-            const dotC    = isRoot ? tc : sc;
-            const r       = isRoot ? ROOT_R : DEV_R;
-
+          {nodes.slice(1).map(dev => {
+            const isDown = dev.status === "down";
+            const isWarn = dev.status === "warning";
+            const col    = isDown ? "#FF2A2A" : isWarn ? "#FFB014" : STATUS_COLOR[dev.status] || "#00FF66";
             return (
-              <g key={`dot-${dev.id}`} data-testid={`wug-dev-${dev.id}`}>
-                {/* Outer glow */}
-                <circle cx={dev.x} cy={dev.y} r={r + 4}
-                  fill="none" stroke={dotC} strokeWidth="0.5"
-                  opacity={isDown ? 0.4 : isRoot ? 0.18 : 0.06} />
-                {/* Offline pulse ring */}
-                {isDown && (
-                  <circle cx={dev.x} cy={dev.y} r={r + 3}
-                    fill="none" stroke="#FF2A2A" strokeWidth="0.9"
-                    style={{ animation: "wugdot-pulse 1.6s ease-in-out infinite" }}
-                  />
-                )}
-                {/* Main dot */}
-                <circle cx={dev.x} cy={dev.y} r={r}
-                  fill={isDown ? "#3D0808" : isRoot ? "#1A0D2E" : isDown ? "#3D0808" : "#004422"}
-                  stroke={dotC} strokeWidth={isRoot ? 1.5 : isDown ? 1.2 : 0.9}
-                />
-                {/* Root type label */}
-                {isRoot && (
-                  <text x={dev.x} y={dev.y + 3.5}
-                    fontSize="5.5" fontFamily="'JetBrains Mono',monospace"
-                    fill={tc} textAnchor="middle" fontWeight={700}>
-                    {dev.type === "firewall" ? "FW"
-                     : dev.type === "gateway" ? "GW"
-                     : dev.type.startsWith("switch") || dev.type === "poe_switch" ? "SW"
-                     : "??"}
-                  </text>
-                )}
-              </g>
+              <circle key={dev.id}
+                cx={dev.x} cy={dev.y} r={DEV_R}
+                fill={col}
+                opacity={isDown ? 0.95 : 0.80}
+              />
             );
           })}
+
+          {/* Root node */}
+          {root && (
+            <g>
+              <circle cx={0} cy={0} r={ROOT_R}
+                fill="#0D0D20" stroke="#8060E0" strokeWidth={1.5} />
+              <text x={0} y={3.5} fontSize="5" textAnchor="middle"
+                fill="#8060E0" fontFamily="'JetBrains Mono',monospace">
+                GW
+              </text>
+            </g>
+          )}
         </svg>
       </div>
     </div>
