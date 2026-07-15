@@ -1,22 +1,14 @@
 /**
- * WUGDevices — Radial hub-and-spoke NOC topology.
+ * WUGDevices — Radial hub-and-spoke NOC topology with per-site device trees.
  *
- * Layout:
- *   ┌──────────────────────────────────────────┐
- *   │  Header: title + KPIs + refresh          │
- *   │  Status banner                           │
- *   │  ┌────────── Radial SVG ──────────────┐  │
- *   │  │  Central WUG POLLER node (cyan)    │  │
- *   │  │  Spokes to each location           │  │
- *   │  │  Canvas overlay: traveling dots    │  │
- *   │  └────────────────────────────────────┘  │
- *   │  Device roster (scrollable compact table)│
- *   └──────────────────────────────────────────┘
+ * Layout: Central WUG POLLER → radial spokes → site nodes → device circles
+ * Each site has individual device nodes branching radially outward:
+ *   gateway → switches → APs/cameras (PCB-style sub-tree per site)
  *
- * Animation (Pi-safe):
- *   - Sonar rings on central node: CSS opacity keyframe (Pi-confirmed)
- *   - Traveling data dots: Canvas 2D rAF at 15fps (Pi-confirmed)
- *   - Offline node pulse: CSS opacity keyframe
+ * Pi-safe animations:
+ *   - Sonar rings on WUG Poller: CSS opacity keyframe
+ *   - Traveling spoke dots: Canvas 2D at 15fps
+ *   - Offline pulse rings: CSS opacity keyframe
  */
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
@@ -24,123 +16,242 @@ import { RefreshCw, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-// ── SVG coordinate space ─────────────────────────────────────────────────────
-const VW = 1000, VH = 500;   // viewBox dimensions
-const CX  = 500, CY  = 230;  // WUG poller center
-const R   = 185;              // spoke radius (center → location node center)
-const NW  = 138, NH = 52;    // location node dimensions
+// ── SVG coordinate space ──────────────────────────────────────────────────────
+const VW = 1700, VH = 760;
+const CX = 850, CY = 390;   // WUG Poller center — slightly below-center for balance
+const R_SITE = 195;           // Poller → site node center
+const NW = 118, NH = 40;     // site node rect dimensions
+const DEV_R = 14;             // device circle radius
+const DEV_STEP = 54;          // radial distance per tree depth
+const LEAF_SEP = 44;          // cross-spoke spacing per leaf slot
 
 const TYPE_COLOR = {
+  firewall:     "#FF6B35",
   gateway:      "#A78BFA",
   switch:       "#00FF66",
   poe_switch:   "#00FF66",
   access_point: "#00E5FF",
   camera:       "#FFB014",
-  device:       "#3A3A48",
+  device:       "#505068",
 };
 
-// ── Embedded mock data ────────────────────────────────────────────────────────
+const TYPE_ABBR = {
+  firewall:     "FW",
+  gateway:      "GW",
+  switch:       "SW",
+  poe_switch:   "SW",
+  access_point: "AP",
+  camera:       "CAM",
+  device:       "?",
+};
+
+// ── Demo data ─────────────────────────────────────────────────────────────────
 const MOCK = {
   locations: [
-    { id: "novi",         name: "Novi HQ",
+    {
+      id: "novi", name: "Novi HQ",
       devices: [
-        { id:"n-gw", name:"UDM-Pro",       type:"gateway",     status:"up"   },
-        { id:"n-s1", name:"USW-48-Pro",    type:"switch",      status:"up"   },
-        { id:"n-s2", name:"USW-24-POE",    type:"switch",      status:"up"   },
-        { id:"n-a1", name:"U6-Pro Lobby",  type:"access_point",status:"up"   },
-        { id:"n-a2", name:"U6-Pro Office", type:"access_point",status:"up"   },
-        { id:"n-a3", name:"U6-LR Whs",     type:"access_point",status:"up"   },
-      ] },
-    { id: "remus",        name: "Remus",
+        { id: "n-gw",  name: "UDM-Pro",     type: "gateway",      status: "up" },
+        { id: "n-s1",  name: "USW-48-Pro",  type: "switch",       status: "up" },
+        { id: "n-s2",  name: "USW-24-POE",  type: "poe_switch",   status: "up" },
+        { id: "n-a1",  name: "U6-Pro Lby",  type: "access_point", status: "up" },
+        { id: "n-a2",  name: "U6-Pro Off",  type: "access_point", status: "up" },
+        { id: "n-a3",  name: "U6-LR Whs",   type: "access_point", status: "up" },
+      ],
+    },
+    {
+      id: "remus", name: "Remus",
       devices: [
-        { id:"r-gw", name:"USG-Pro",   type:"gateway",     status:"up"   },
-        { id:"r-s1", name:"USW-24",    type:"switch",      status:"up"   },
-        { id:"r-a1", name:"U6-Lite A", type:"access_point",status:"down" },
-        { id:"r-a2", name:"U6-Lite B", type:"access_point",status:"up"   },
-      ] },
-    { id: "mt-pleasant",  name: "Mt. Pleasant",
+        { id: "r-gw",  name: "USG-Pro",     type: "gateway",      status: "up"   },
+        { id: "r-s1",  name: "USW-24",      type: "switch",       status: "up"   },
+        { id: "r-a1",  name: "U6-Lite A",   type: "access_point", status: "down" },
+        { id: "r-a2",  name: "U6-Lite B",   type: "access_point", status: "up"   },
+      ],
+    },
+    {
+      id: "mt-pleasant", name: "Mt. Pleasant",
       devices: [
-        { id:"m-gw", name:"USG",          type:"gateway",     status:"up" },
-        { id:"m-s1", name:"USW-16",       type:"switch",      status:"up" },
-        { id:"m-a1", name:"U6-Pro Flr 1", type:"access_point",status:"up" },
-        { id:"m-a2", name:"U6-Pro Flr 2", type:"access_point",status:"up" },
-      ] },
-    { id: "ovid",         name: "Ovid",
+        { id: "m-gw",  name: "USG",         type: "gateway",      status: "up" },
+        { id: "m-s1",  name: "USW-16",      type: "switch",       status: "up" },
+        { id: "m-a1",  name: "U6-Pro F1",   type: "access_point", status: "up" },
+        { id: "m-a2",  name: "U6-Pro F2",   type: "access_point", status: "up" },
+      ],
+    },
+    {
+      id: "ovid", name: "Ovid",
       devices: [
-        { id:"o-gw", name:"USG",      type:"gateway",     status:"up" },
-        { id:"o-s1", name:"USW-8",    type:"switch",      status:"up" },
-        { id:"o-a1", name:"U6-Lite",  type:"access_point",status:"up" },
-      ] },
-    { id: "middlebury",   name: "Middlebury",
+        { id: "o-gw",  name: "USG",         type: "gateway",      status: "up" },
+        { id: "o-s1",  name: "USW-8",       type: "switch",       status: "up" },
+        { id: "o-a1",  name: "U6-Lite",     type: "access_point", status: "up" },
+      ],
+    },
+    {
+      id: "middlebury", name: "Middlebury",
       devices: [
-        { id:"mb-gw", name:"USG-Pro",    type:"gateway",     status:"up" },
-        { id:"mb-s1", name:"USW-16-POE", type:"poe_switch",  status:"up" },
-        { id:"mb-a1", name:"U6-LR",      type:"access_point",status:"up" },
-      ] },
-    { id: "canton",       name: "Canton",
+        { id: "mb-gw", name: "USG-Pro",     type: "gateway",      status: "up" },
+        { id: "mb-s1", name: "USW-16-POE",  type: "poe_switch",   status: "up" },
+        { id: "mb-a1", name: "U6-LR",       type: "access_point", status: "up" },
+      ],
+    },
+    {
+      id: "canton", name: "Canton",
       devices: [
-        { id:"k-gw", name:"USG-Pro",        type:"gateway",     status:"up" },
-        { id:"k-s1", name:"USW-24-POE",     type:"poe_switch",  status:"up" },
-        { id:"k-a1", name:"U6-Pro Office",  type:"access_point",status:"up" },
-        { id:"k-a2", name:"U6-Lite Flr 2",  type:"access_point",status:"up" },
-      ] },
-    { id: "constantine",  name: "Constantine",
+        { id: "k-gw",  name: "USG-Pro",     type: "gateway",      status: "up" },
+        { id: "k-s1",  name: "USW-24-POE",  type: "poe_switch",   status: "up" },
+        { id: "k-a1",  name: "U6-Pro Off",  type: "access_point", status: "up" },
+        { id: "k-a2",  name: "U6-Lite F2",  type: "access_point", status: "up" },
+      ],
+    },
+    {
+      id: "constantine", name: "Constantine",
       devices: [
-        { id:"c-gw", name:"USG",     type:"gateway",     status:"up" },
-        { id:"c-s1", name:"USW-8",   type:"switch",      status:"up" },
-        { id:"c-a1", name:"U6-Lite", type:"access_point",status:"up" },
-      ] },
-    { id: "canton-whs",   name: "Canton Whs",
+        { id: "c-gw",  name: "USG",         type: "gateway",      status: "up" },
+        { id: "c-s1",  name: "USW-8",       type: "switch",       status: "up" },
+        { id: "c-a1",  name: "U6-Lite",     type: "access_point", status: "up" },
+      ],
+    },
+    {
+      id: "canton-whs", name: "Canton Whs",
       devices: [
-        { id:"cw-gw", name:"USG",     type:"gateway",     status:"up" },
-        { id:"cw-s1", name:"USW-8",   type:"switch",      status:"up" },
-        { id:"cw-a1", name:"U6-Nano", type:"access_point",status:"up" },
-      ] },
+        { id: "cw-gw", name: "USG",         type: "gateway",      status: "up" },
+        { id: "cw-s1", name: "USW-8",       type: "switch",       status: "up" },
+        { id: "cw-a1", name: "U6-Nano",     type: "access_point", status: "up" },
+      ],
+    },
   ],
 };
 
-// ── Position each location node around the central hub ────────────────────────
+// ── Tree layout helpers ───────────────────────────────────────────────────────
+
+/** Infer parent_id relationships from device types (used for demo data). */
+function inferParents(devices) {
+  if (!devices?.length) return [];
+  const firewalls  = devices.filter(d => d.type === "firewall");
+  const gateways   = devices.filter(d => d.type === "gateway");
+  const switches   = devices.filter(d => d.type === "switch" || d.type === "poe_switch");
+  const aps        = devices.filter(d => d.type === "access_point");
+  const cameras    = devices.filter(d => d.type === "camera");
+  const others     = devices.filter(d =>
+    !["firewall","gateway","switch","poe_switch","access_point","camera"].includes(d.type));
+
+  const root = firewalls[0] || gateways[0] || switches[0] || devices[0];
+  const result = [{ ...root, parent_id: null }];
+  const notRoot = d => d.id !== root.id;
+
+  [...firewalls.filter(notRoot), ...gateways.filter(notRoot)]
+    .forEach(d => result.push({ ...d, parent_id: root.id }));
+
+  const swNoRoot = switches.filter(notRoot);
+  swNoRoot.forEach(s => result.push({ ...s, parent_id: root.id }));
+
+  const swParents = swNoRoot.length ? swNoRoot : [root];
+  aps.forEach((ap, i) => result.push({ ...ap, parent_id: swParents[i % swParents.length].id }));
+  cameras.forEach((cam, i) => result.push({ ...cam, parent_id: swParents[i % swParents.length].id }));
+  others.filter(notRoot).forEach(o => result.push({ ...o, parent_id: root.id }));
+
+  return result;
+}
+
+/** Build a tree structure from a flat list with parent_id fields. */
+function buildTree(flat) {
+  const byId = {};
+  flat.forEach(d => (byId[d.id] = { device: d, children: [] }));
+  let root = null;
+  flat.forEach(d => {
+    if (!d.parent_id) root = byId[d.id];
+    else if (byId[d.parent_id]) byId[d.parent_id].children.push(byId[d.id]);
+  });
+  return root;
+}
+
+/**
+ * Layout device nodes radially outward from a site node.
+ * Handles both provided parent_id (real WUG data) and type-inferred hierarchy (demo).
+ * Returns array: [{...device, x, y, parentX, parentY}]
+ */
+function layoutDevicesForSite(site, devices) {
+  if (!devices?.length) return [];
+
+  // Use provided parent_ids if any device has one; otherwise infer from types
+  const hasProvidedParents = devices.some(d => d.parent_id != null);
+  const flat = hasProvidedParents ? devices : inferParents(devices);
+  const tree = buildTree(flat);
+  if (!tree) return [];
+
+  const cosA = Math.cos(site.angle);
+  const sinA = Math.sin(site.angle);
+
+  // Pass 1: assign leaf slot indices via DFS
+  let leafIdx = 0;
+  function assignSlots(node) {
+    if (!node.children.length) {
+      node.centerSlot = leafIdx++;
+      return;
+    }
+    node.children.forEach(assignSlots);
+    node.centerSlot =
+      (node.children[0].centerSlot + node.children[node.children.length - 1].centerSlot) / 2;
+  }
+  assignSlots(tree);
+
+  const totalLeaves  = leafIdx;
+  const centerOffset = (totalLeaves - 1) / 2;
+
+  // Pass 2: collect absolute SVG positions using radial + cross-spoke transform
+  const result = [];
+  function collect(node, depth, parentX, parentY) {
+    const cross  = (node.centerSlot - centerOffset) * LEAF_SEP;
+    const radial = depth * DEV_STEP;
+    // (radial, cross) → SVG: radial along spoke direction, cross perpendicular
+    const x = site.x + radial * cosA - cross * sinA;
+    const y = site.y + radial * sinA + cross * cosA;
+    result.push({ ...node.device, x, y, parentX, parentY });
+    node.children.forEach(child => collect(child, depth + 1, x, y));
+  }
+  collect(tree, 1, site.x, site.y);
+  return result;
+}
+
+// ── Site and device position computation ──────────────────────────────────────
 function computeLayout(locations) {
   const N = locations.length;
   return locations.map((loc, i) => {
     const angle = (2 * Math.PI * i / N) - Math.PI / 2;
+    const x  = CX + R_SITE * Math.cos(angle);
+    const y  = CY + R_SITE * Math.sin(angle);
     return {
       ...loc,
-      angle,
-      x: CX + R * Math.cos(angle),  // center of node
-      y: CY + R * Math.sin(angle),
-      nx: CX + R * Math.cos(angle) - NW / 2,  // top-left of node rect
-      ny: CY + R * Math.sin(angle) - NH / 2,
+      angle, x, y,
+      nx: x - NW / 2,
+      ny: y - NH / 2,
+      deviceNodes: layoutDevicesForSite({ x, y, angle }, loc.devices),
     };
   });
 }
 
-// Build canvas dot definitions for spoke animation
+/** Canvas dot definitions: traveling dots along center→site spokes. */
 function buildSpokeDots(locs) {
   return locs.flatMap((loc, i) => {
     const hasIssue = loc.devices.some(d => d.status === "down");
-    const numDots  = 3;
-    const speed    = 0.20;
-    return Array.from({ length: numDots }, (_, j) => ({
-      x1: CX, y1: CY,
-      x2: loc.x, y2: loc.y,
-      speed, hasIssue,
-      progress: (j / numDots + i * 0.13) % 1,
+    return Array.from({ length: 3 }, (_, j) => ({
+      x1: CX, y1: CY, x2: loc.x, y2: loc.y,
+      speed: 0.22, hasIssue,
+      progress: (j / 3 + i * 0.13) % 1,
     }));
   });
 }
 
-// ── Radial topology with canvas overlay ──────────────────────────────────────
+// ── Radial topology: SVG + Canvas overlay ────────────────────────────────────
 function RadialTopology({ locs }) {
   const canvasRef = useRef(null);
   const dotDefs   = useRef([]);
 
-  // Recompute dot definitions whenever layout changes
+  // Rebuild dot paths whenever layout changes
   useEffect(() => {
     dotDefs.current = buildSpokeDots(locs).map(d => ({ ...d }));
   }, [locs]);
 
-  // Canvas animation: 15fps, same coordinate transform as SVG viewBox
+  // Canvas 15fps animation loop (Pi-safe: no CSS transform/motion-path)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -166,7 +277,7 @@ function RadialTopology({ locs }) {
       const cW = canvas.width, cH = canvas.height;
       if (!cW || !cH) return;
 
-      // Same preserveAspectRatio="xMidYMid meet" transform as SVG
+      // Match SVG preserveAspectRatio="xMidYMid meet" transform
       const scale   = Math.min(cW / VW, cH / VH);
       const offsetX = (cW - VW * scale) / 2;
       const offsetY = (cH - VH * scale) / 2;
@@ -176,13 +287,11 @@ function RadialTopology({ locs }) {
       for (const d of dotDefs.current) {
         d.progress += d.speed * dt;
         if (d.progress >= 1) d.progress -= 1;
-
-        const t   = d.progress;
+        const t    = d.progress;
         const svgX = d.x1 + (d.x2 - d.x1) * t;
         const svgY = d.y1 + (d.y2 - d.y1) * t;
-        const cx  = svgX * scale + offsetX;
-        const cy  = svgY * scale + offsetY;
-
+        const cx   = svgX * scale + offsetX;
+        const cy   = svgY * scale + offsetY;
         const alpha = t < 0.08 ? t / 0.08 : t > 0.88 ? (1 - t) / 0.12 : 1;
         ctx.globalAlpha = alpha;
         ctx.fillStyle   = d.hasIssue ? "#FF4444" : "#00FF66";
@@ -194,8 +303,11 @@ function RadialTopology({ locs }) {
     };
 
     animId = requestAnimationFrame(tick);
-    return () => { cancelAnimationFrame(animId); window.removeEventListener("resize", syncSize); };
-  }, []);  // mounts once; dotDefs ref updates without re-running
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", syncSize);
+    };
+  }, []);
 
   return (
     <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
@@ -209,45 +321,77 @@ function RadialTopology({ locs }) {
           <style>{`
             @keyframes wug-sonar {
               0%   { opacity: 0.55; }
-              100% { opacity: 0;    }
+              100% { opacity: 0; }
             }
             @keyframes wug-offline-pulse {
               0%, 100% { opacity: 0.2; }
-              50%       { opacity: 0.8; }
+              50%       { opacity: 0.85; }
             }
             @keyframes wug-center-breathe {
               0%, 100% { opacity: 0.85; }
-              50%       { opacity: 1;   }
+              50%       { opacity: 1; }
             }
           `}</style>
-          {/* Dot-grid background */}
           <pattern id="wug-dotgrid" width="28" height="28" patternUnits="userSpaceOnUse">
-            <circle cx="1" cy="1" r="0.8" fill="#0D0D1E" />
+            <circle cx="1" cy="1" r="0.7" fill="#0C0C1A" />
           </pattern>
         </defs>
 
-        {/* Background dot grid */}
-        <rect x="0" y="0" width={VW} height={VH} fill="url(#wug-dotgrid)" />
+        {/* Background */}
+        <rect x="0" y="0" width={VW} height={VH} fill="#050510" />
+        <rect x="0" y="0" width={VW} height={VH} fill="url(#wug-dotgrid)" opacity="0.55" />
 
-        {/* ── Spokes: center → each location ── */}
+        {/* ── Center → site spoke lines (dim, static) ── */}
         {locs.map(loc => {
           const hasIssue = loc.devices.some(d => d.status === "down");
-          const color    = hasIssue ? "#FF2A2A" : "#00FF66";
           return (
             <line key={`spoke-${loc.id}`}
               x1={CX} y1={CY} x2={loc.x} y2={loc.y}
-              stroke={color}
-              strokeWidth={hasIssue ? 0.9 : 0.6}
-              opacity={hasIssue ? 0.4 : 0.18}
+              stroke={hasIssue ? "#FF2A2A" : "#00FF66"}
+              strokeWidth={hasIssue ? 0.9 : 0.65}
+              opacity={hasIssue ? 0.35 : 0.14}
             />
           );
         })}
 
+        {/* ── Device connection lines: site→device and device→device ── */}
+        {locs.flatMap(loc =>
+          loc.deviceNodes.map(dev => {
+            const tc     = TYPE_COLOR[dev.type] || TYPE_COLOR.device;
+            const isDown = dev.status === "down";
+            return (
+              <line key={`devline-${dev.id}`}
+                x1={dev.parentX} y1={dev.parentY}
+                x2={dev.x} y2={dev.y}
+                stroke={isDown ? "#FF2A2A" : tc}
+                strokeWidth="1.2"
+                opacity={isDown ? 0.55 : 0.32}
+              />
+            );
+          })
+        )}
+        {/* Junction dots at device connection midpoints */}
+        {locs.flatMap(loc =>
+          loc.deviceNodes.map(dev => {
+            const tc     = TYPE_COLOR[dev.type] || TYPE_COLOR.device;
+            const isDown = dev.status === "down";
+            const mx = (dev.x + dev.parentX) / 2;
+            const my = (dev.y + dev.parentY) / 2;
+            return (
+              <circle key={`junct-${dev.id}`}
+                cx={mx} cy={my} r="1.8"
+                fill={isDown ? "#FF2A2A" : tc}
+                opacity={isDown ? 0.6 : 0.35}
+              />
+            );
+          })
+        )}
+
         {/* ── WUG Poller: sonar rings ── */}
         {[1.6, 2.3, 3.1].map((factor, i) => (
           <circle key={`ring-${i}`}
-            cx={CX} cy={CY} r={36 * factor}
-            fill="none" stroke="#00E5FF" strokeWidth="0.8"
+            cx={CX} cy={CY} r={32 * factor}
+            fill="none" stroke="#00E5FF" strokeWidth="0.75"
             style={{
               animation: "wug-sonar 2.6s ease-out infinite",
               animationDelay: `${i * 0.85}s`,
@@ -255,98 +399,129 @@ function RadialTopology({ locs }) {
             }}
           />
         ))}
+        {/* Guide ring */}
+        <circle cx={CX} cy={CY} r={38} fill="none" stroke="#00E5FF" strokeWidth="0.7" opacity="0.1" />
 
-        {/* ── WUG Poller: outer glow ring ── */}
-        <circle cx={CX} cy={CY} r={42} fill="none" stroke="#00E5FF" strokeWidth="1" opacity="0.15" />
-
-        {/* ── WUG Poller: main hexagon-ish shape (octagon using rect+clip) ── */}
-        <rect x={CX - 30} y={CY - 30} width={60} height={60} rx="6"
-          fill="#060614" stroke="#00E5FF" strokeWidth="1.5"
+        {/* WUG Poller node */}
+        <rect x={CX - 28} y={CY - 28} width={56} height={56} rx="6"
+          fill="#060614" stroke="#00E5FF" strokeWidth="1.4"
           style={{ animation: "wug-center-breathe 3s ease-in-out infinite" }} />
-        {/* Inner accent */}
-        <rect x={CX - 22} y={CY - 22} width={44} height={44} rx="4"
-          fill="none" stroke="#00E5FF" strokeWidth="0.5" opacity="0.35" />
-        {/* WUG label */}
-        <text x={CX} y={CY - 6} fontSize="9" fontFamily="'JetBrains Mono',monospace"
-          fill="#00E5FF" textAnchor="middle" fontWeight={700} letterSpacing="0.15em">
-          WUG
-        </text>
-        <text x={CX} y={CY + 7} fontSize="6" fontFamily="'JetBrains Mono',monospace"
-          fill="#00E5FF" textAnchor="middle" letterSpacing="0.12em" opacity="0.65">
-          POLLER
-        </text>
-        {/* Center dot */}
-        <circle cx={CX} cy={CY} r="3.5" fill="#00E5FF" opacity="0.9"
-          data-testid="node-wug-poller" />
+        <rect x={CX - 20} y={CY - 20} width={40} height={40} rx="4"
+          fill="none" stroke="#00E5FF" strokeWidth="0.5" opacity="0.28" />
+        <text x={CX} y={CY - 3} fontSize="9" fontFamily="'JetBrains Mono',monospace"
+          fill="#00E5FF" textAnchor="middle" fontWeight={700} letterSpacing="0.15em">WUG</text>
+        <text x={CX} y={CY + 9} fontSize="5.5" fontFamily="'JetBrains Mono',monospace"
+          fill="#00E5FF" textAnchor="middle" letterSpacing="0.12em" opacity="0.6">POLLER</text>
+        <circle cx={CX} cy={CY} r="3" fill="#00E5FF" opacity="0.9" data-testid="node-wug-poller" />
 
-        {/* ── Location nodes ── */}
+        {/* ── Site nodes ── */}
         {locs.map(loc => {
           const hasIssue  = loc.devices.some(d => d.status === "down");
           const downCount = loc.devices.filter(d => d.status === "down").length;
           const upCount   = loc.devices.filter(d => d.status !== "down").length;
-          const total     = loc.devices.length;
           const bc        = hasIssue ? "#FF2A2A" : "#00FF66";
           const textC     = hasIssue ? "#FF8080" : "#C4C4D8";
 
           return (
-            <g key={`node-${loc.id}`} data-testid={`wug-node-${loc.id}`}>
-              {/* Offline pulse ring */}
+            <g key={`site-${loc.id}`} data-testid={`wug-node-${loc.id}`}>
               {hasIssue && (
-                <rect
-                  x={loc.nx - 5} y={loc.ny - 5}
-                  width={NW + 10} height={NH + 10} rx="5"
+                <rect x={loc.nx - 5} y={loc.ny - 5} width={NW + 10} height={NH + 10} rx="5"
                   fill="none" stroke="#FF2A2A" strokeWidth="1.5"
                   style={{ animation: "wug-offline-pulse 1.6s ease-in-out infinite" }}
                 />
               )}
-
-              {/* Node background */}
               <rect x={loc.nx} y={loc.ny} width={NW} height={NH} rx="3"
-                fill="#070710"
-                stroke={bc} strokeWidth={hasIssue ? 1.2 : 0.7} />
-
+                fill="#07070F" stroke={bc} strokeWidth={hasIssue ? 1.2 : 0.7} />
               {/* Left accent bar */}
               <rect x={loc.nx} y={loc.ny} width="3" height={NH} rx="1"
-                fill={bc} opacity={hasIssue ? 0.7 : 0.85} />
-
-              {/* Site name */}
-              <text x={loc.nx + 11} y={loc.ny + 17}
-                fontSize="9" fontFamily="'JetBrains Mono',monospace"
-                fill={textC} fontWeight={700} letterSpacing="0.12em">
-                {loc.name.toUpperCase()}
+                fill={bc} opacity={hasIssue ? 0.75 : 0.85} />
+              <text x={loc.nx + 10} y={loc.ny + 16}
+                fontSize="9.5" fontFamily="'JetBrains Mono',monospace"
+                fill={textC} fontWeight={700} letterSpacing="0.1em">
+                {loc.name.toUpperCase().slice(0, 12)}
               </text>
-
-              {/* Up/down count */}
-              <text x={loc.nx + 11} y={loc.ny + 31}
+              <text x={loc.nx + 10} y={loc.ny + 30}
                 fontSize="7.5" fontFamily="'JetBrains Mono',monospace"
-                fill={hasIssue ? "#FF4444" : "#286040"} letterSpacing="0.06em">
-                {upCount}/{total} UP
-                {downCount > 0 ? ` · ${downCount} DOWN` : ""}
+                fill={hasIssue ? "#FF4444" : "#264A38"} letterSpacing="0.04em">
+                {upCount}/{loc.devices.length} UP{downCount > 0 ? ` · ${downCount} DN` : ""}
               </text>
-
-              {/* Device type mini-dots */}
-              {loc.devices.slice(0, 8).map((dev, di) => (
-                <circle key={dev.id}
-                  cx={loc.nx + NW - 14 - di * 10} cy={loc.ny + 15}
-                  r="3.2"
-                  fill={dev.status === "down" ? "#FF2A2A" : (TYPE_COLOR[dev.type] || "#3A3A48")}
-                  opacity={dev.status === "down" ? 0.9 : 0.55}
-                />
-              ))}
-
               {/* Status corner dot */}
-              <circle cx={loc.nx + NW - 8} cy={loc.ny + NH - 10} r="4"
-                fill={bc} opacity={hasIssue ? 1 : 0.7}
+              <circle cx={loc.nx + NW - 9} cy={loc.ny + NH - 9} r="5"
+                fill={bc} opacity={hasIssue ? 1 : 0.65}
                 style={hasIssue ? { animation: "wug-offline-pulse 1.6s ease-in-out infinite" } : {}} />
             </g>
           );
         })}
+
+        {/* ── Device nodes: colored circles per site, branching radially outward ── */}
+        {locs.flatMap(loc => {
+          const cosA = Math.cos(loc.angle);
+          const sinA = Math.sin(loc.angle);
+          return loc.deviceNodes.map(dev => {
+            const tc     = TYPE_COLOR[dev.type] || TYPE_COLOR.device;
+            const isDown = dev.status === "down";
+            const bc     = isDown ? "#FF2A2A" : tc;
+            const abbr   = TYPE_ABBR[dev.type] || "?";
+            const label  = dev.name.slice(0, 9);
+
+            // Label placed in the outward radial direction from WUG Poller
+            const LABEL_OFF = DEV_R + 11;
+            const lblX      = dev.x + LABEL_OFF * cosA;
+            const lblY      = dev.y + LABEL_OFF * sinA + 2.5;
+            const anchor    = Math.abs(sinA) > 0.65 ? "middle" : (cosA >= 0 ? "start" : "end");
+
+            return (
+              <g key={`devnode-${dev.id}`} data-testid={`wug-dev-${dev.id}`}>
+                {/* Outer ambient glow ring */}
+                <circle cx={dev.x} cy={dev.y} r={DEV_R + 6}
+                  fill="none" stroke={bc} strokeWidth="0.5"
+                  opacity={isDown ? 0.35 : 0.12}
+                />
+                {/* Offline pulse ring */}
+                {isDown && (
+                  <circle cx={dev.x} cy={dev.y} r={DEV_R + 4}
+                    fill="none" stroke="#FF2A2A" strokeWidth="1.2"
+                    style={{ animation: "wug-offline-pulse 1.6s ease-in-out infinite" }}
+                  />
+                )}
+                {/* Mid accent ring (online only) */}
+                {!isDown && (
+                  <circle cx={dev.x} cy={dev.y} r={DEV_R + 2}
+                    fill="none" stroke={tc} strokeWidth="0.4" opacity="0.2"
+                  />
+                )}
+                {/* Device circle body */}
+                <circle cx={dev.x} cy={dev.y} r={DEV_R}
+                  fill={isDown ? "#180808" : "#06061A"}
+                  stroke={bc} strokeWidth={isDown ? 1.6 : 1.0}
+                />
+                {/* Type abbreviation inside */}
+                <text x={dev.x} y={dev.y + 4}
+                  fontSize="7" fontFamily="'JetBrains Mono',monospace"
+                  fill={bc} textAnchor="middle" fontWeight={700} letterSpacing="0.04em">
+                  {abbr}
+                </text>
+                {/* Device name label in spoke-outward direction */}
+                <text x={lblX} y={lblY}
+                  fontSize="8" fontFamily="'JetBrains Mono',monospace"
+                  fill={isDown ? "#FF7070" : "#5A5A78"}
+                  textAnchor={anchor} letterSpacing="0.04em">
+                  {label}
+                </text>
+              </g>
+            );
+          });
+        })}
       </svg>
 
-      {/* ── Canvas overlay: traveling data dots ── */}
+      {/* Canvas overlay: animated traveling dots on spokes */}
       <canvas
         ref={canvasRef}
-        style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+        style={{
+          position: "absolute", top: 0, left: 0,
+          width: "100%", height: "100%",
+          pointerEvents: "none",
+        }}
       />
     </div>
   );
@@ -410,13 +585,15 @@ export default function WUGDevices() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {[
-            ["SITES",   data.locations.length, "#3A3A50"],
-            ["DEVICES", totalDevices,           "#C4C4D8"],
-            ["DOWN",    totalDown,               totalDown > 0 ? "#FF4444" : "#3A3A50"],
+            ["SITES",   data.locations.length,   "#3A3A50"],
+            ["DEVICES", totalDevices,              "#C4C4D8"],
+            ["DOWN",    totalDown, totalDown > 0 ? "#FF4444" : "#3A3A50"],
           ].map(([label, val, color]) => (
             <div key={label} style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color, lineHeight: 1 }}>{val}</div>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A", letterSpacing: "0.1em", marginTop: 2 }}>{label}</div>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700,
+                color, lineHeight: 1 }}>{val}</div>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A",
+                letterSpacing: "0.1em", marginTop: 2 }}>{label}</div>
             </div>
           ))}
           <button data-testid="wug-refresh-btn" onClick={fetchTopology}
@@ -427,7 +604,8 @@ export default function WUGDevices() {
             REFRESH
           </button>
           {lastFetch && (
-            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A", letterSpacing: "0.06em" }}>
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A",
+              letterSpacing: "0.06em" }}>
               {lastFetch.toLocaleTimeString()}
             </span>
           )}
@@ -436,81 +614,29 @@ export default function WUGDevices() {
 
       {/* ── Status banner ── */}
       {anyIssue ? (
-        <div data-testid="wug-alert-banner" style={{ flexShrink: 0, padding: "6px 14px", background: "#140808",
-          border: "1px solid #FF2A2A33", display: "flex", alignItems: "center", gap: 10 }}>
+        <div data-testid="wug-alert-banner" style={{ flexShrink: 0, padding: "6px 14px",
+          background: "#140808", border: "1px solid #FF2A2A33",
+          display: "flex", alignItems: "center", gap: 10 }}>
           <AlertTriangle size={12} color="#FF4444" />
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#FF6060", letterSpacing: "0.1em" }}>
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#FF6060",
+            letterSpacing: "0.1em" }}>
             {totalDown} DEVICE{totalDown !== 1 ? "S" : ""} DOWN — CHECK AFFECTED LOCATIONS
           </span>
         </div>
       ) : (
-        <div data-testid="wug-status-ok" style={{ flexShrink: 0, padding: "6px 14px", background: "#080F08",
-          border: "1px solid #00FF6622", display: "flex", alignItems: "center", gap: 10 }}>
+        <div data-testid="wug-status-ok" style={{ flexShrink: 0, padding: "6px 14px",
+          background: "#080F08", border: "1px solid #00FF6622",
+          display: "flex", alignItems: "center", gap: 10 }}>
           <CheckCircle2 size={12} color="#00FF66" />
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#00CC44", letterSpacing: "0.1em" }}>
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#00CC44",
+            letterSpacing: "0.1em" }}>
             ALL {totalDevices} DEVICES OPERATIONAL ACROSS {data.locations.length} SITES
           </span>
         </div>
       )}
 
-      {/* ── Radial topology (main area, flex:1) ── */}
+      {/* ── Radial topology (flex:1 — fills remaining height) ── */}
       <RadialTopology locs={locs} />
-
-      {/* ── Device roster ── */}
-      <div style={{ flexShrink: 0, height: 160, background: "#07070F",
-        border: "1px solid #10101C", borderTop: "2px solid #1C2830",
-        display: "flex", flexDirection: "column", overflow: "hidden" }}>
-
-        <div style={{ padding: "6px 16px", borderBottom: "1px solid #0E0E1A",
-          display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, fontWeight: 700,
-            color: "#505068", letterSpacing: "0.18em" }}>
-            DEVICE ROSTER
-          </span>
-          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#28283A", letterSpacing: "0.06em" }}>
-            {totalDevices} DEVICES · POLLING EVERY 60S
-          </span>
-        </div>
-
-        <div style={{ flex: 1, overflow: "auto", padding: "4px 12px 8px" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {data.locations.flatMap(loc =>
-              loc.devices.map(dev => {
-                const down = dev.status === "down";
-                const tc   = TYPE_COLOR[dev.type] || "#3A3A48";
-                return (
-                  <div key={dev.id} data-testid={`wug-roster-${dev.id}`}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 7,
-                      padding: "4px 10px 4px 0", paddingLeft: 7,
-                      borderLeft: `2px solid ${down ? "#FF2A2A" : tc}`,
-                      background: down ? "#0E0606" : "#0A0A13",
-                      minWidth: 190, flex: "1 1 190px",
-                    }}>
-                    <span style={{ width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
-                      background: down ? "#FF2A2A" : tc, boxShadow: `0 0 4px ${down ? "#FF2A2A" : tc}` }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5,
-                        color: down ? "#FF7070" : "#B0B0C8", letterSpacing: "0.04em",
-                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {dev.name}
-                      </div>
-                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 6,
-                        color: "#28283A", letterSpacing: "0.04em" }}>
-                        {loc.name} · {dev.ip || dev.type}
-                      </div>
-                    </div>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 5.5,
-                      color: down ? "#FF4444" : "#28283A", letterSpacing: "0.08em", flexShrink: 0 }}>
-                      {down ? "DOWN" : "UP"}
-                    </span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </div>
 
     </div>
   );

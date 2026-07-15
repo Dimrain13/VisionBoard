@@ -10,6 +10,7 @@ import { RefreshCw, AlertTriangle, CheckCircle2 } from "lucide-react";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const TYPE = {
+  firewall:     { color: "#FF6B35", abbr: "FW",  label: "FIREWALL" },
   gateway:      { color: "#A78BFA", abbr: "GW",  label: "GATEWAY" },
   switch:       { color: "#00FF66", abbr: "SW",  label: "SWITCH"  },
   poe_switch:   { color: "#00FF66", abbr: "PSW", label: "POE SW"  },
@@ -59,22 +60,25 @@ function elbow(p, c) {
 // Infer parent_id from device types when API doesn't provide topology
 function inferParents(devices) {
   if (!devices?.length) return [];
+  const firewalls = devices.filter(d => d.type === "firewall");
   const gateways = devices.filter(d => d.type === "gateway");
   const switches  = devices.filter(d => d.type === "switch" || d.type === "poe_switch");
   const aps       = devices.filter(d => d.type === "access_point");
-  const others    = devices.filter(d => !["gateway","switch","poe_switch","access_point"].includes(d.type));
+  const cameras   = devices.filter(d => d.type === "camera");
+  const others    = devices.filter(d => !["firewall","gateway","switch","poe_switch","access_point","camera"].includes(d.type));
 
-  const root = gateways[0] || switches[0] || devices[0];
+  const root = firewalls[0] || gateways[0] || switches[0] || devices[0];
   const result = [{ ...root, parent_id: null }];
 
   const swNoRoot = switches.filter(s => s.id !== root.id);
   swNoRoot.forEach(s => result.push({ ...s, parent_id: root.id }));
-  gateways.slice(1).forEach(g => result.push({ ...g, parent_id: root.id }));
+  firewalls.filter(f => f.id !== root.id).forEach(f => result.push({ ...f, parent_id: root.id }));
+  gateways.slice(firewalls.length ? 0 : 1).filter(g => g.id !== root.id).forEach(g => result.push({ ...g, parent_id: root.id }));
 
-  // Distribute APs round-robin across available switches
+  // Distribute APs and cameras round-robin across available switches
   const swParents = swNoRoot.length ? swNoRoot : [root];
   aps.forEach((ap, i) => result.push({ ...ap, parent_id: swParents[i % swParents.length].id }));
-
+  cameras.forEach((cam, i) => result.push({ ...cam, parent_id: swParents[i % swParents.length].id }));
   others.filter(o => o.id !== root.id)
         .forEach(o => result.push({ ...o, parent_id: root.id }));
 
@@ -266,7 +270,7 @@ export default function UniFiDevices() {
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const res = await axios.get(`${API}/unifi/devices`);
+      const res = await axios.get(`${API}/unifi/devices`, { timeout: 8000 });
       const devs = res.data?.devices ?? [];
       if (devs.length) {
         // Group by controller
