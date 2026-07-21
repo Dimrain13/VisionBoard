@@ -19,8 +19,7 @@ import {
 import { formatDistanceToNowStrict, parseISO } from "date-fns";
 import MapEmbed from "../components/MapEmbed";
 
-const API      = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const CYCLE_MS = 10000;
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 // ── Severity config ────────────────────────────────────────────────────────────
 const SEV = {
@@ -519,24 +518,7 @@ export default function LocationsDashboard() {
     return () => clearInterval(iv);
   }, [load]);
 
-  // Kiosk: MAP → loc[0] → … → MAP, hold main kiosk timer during cycle
-  useEffect(() => {
-    const iv = setInterval(() => {
-      setActiveTab(prev => {
-        const locs  = locationsRef.current;
-        const order = [null, ...locs.map(l => l.id)];
-        const idx   = order.indexOf(prev);
-        const next  = order[(idx + 1) % order.length];
-        if (next === null && window.__kioskHoldPage) window.__kioskHoldPage(false);
-        else if (prev === null && window.__kioskHoldPage) window.__kioskHoldPage(true);
-        return next;
-      });
-    }, CYCLE_MS);
-    return () => {
-      clearInterval(iv);
-      if (window.__kioskHoldPage) window.__kioskHoldPage(false);
-    };
-  }, []);
+  // No sub-tab auto-rotation on Locations — user navigates manually.
 
   const locations    = data?.locations || [];
   const activeLocObj = activeTab ? locations.find(l => l.id === activeTab) : null;

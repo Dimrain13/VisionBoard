@@ -768,9 +768,12 @@ export default function UniFiDevices() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastFetch,  setLastFetch]  = useState(null);
   const [activeTab,  setActiveTab]  = useState(null); // null = ALL SITES
+  const [autoRotate, setAutoRotate] = useState(true);
 
-  const sitesRef = useRef(sites);
+  const sitesRef     = useRef(sites);
+  const autoRotateRef= useRef(true);
   useEffect(() => { sitesRef.current = sites; }, [sites]);
+  useEffect(() => { autoRotateRef.current = autoRotate; }, [autoRotate]);
 
   // Data fetch
   const load = useCallback(async (manual = false) => {
@@ -810,18 +813,18 @@ export default function UniFiDevices() {
 
   // Kiosk auto-cycle: ALL → site[0] → ... → site[n] → ALL → ...
   // Holds the main kiosk timer while cycling so the rotation doesn't advance mid-cycle.
+  // Only runs when autoRotate is on.
   useEffect(() => {
     const iv = setInterval(() => {
+      if (!autoRotateRef.current) return;
       setActiveTab(prev => {
         const order = [null, ...sitesRef.current.map(s => s.siteId)];
         const idx   = order.indexOf(prev);
         const next  = order[(idx + 1) % order.length];
 
         if (next === null) {
-          // Back to ALL — release main kiosk
           if (window.__kioskHoldPage) window.__kioskHoldPage(false);
         } else if (prev === null) {
-          // Starting site cycle — hold the main kiosk
           if (window.__kioskHoldPage) window.__kioskHoldPage(true);
         }
 
@@ -910,6 +913,39 @@ export default function UniFiDevices() {
               </span>
             ))}
           </div>
+
+          <button
+            data-testid="unifi-autorotate-toggle"
+            onClick={() => {
+              setAutoRotate(v => {
+                const next = !v;
+                if (!next && window.__kioskHoldPage) window.__kioskHoldPage(false);
+                return next;
+              });
+            }}
+            title={autoRotate ? "Disable sub-tab auto-rotation" : "Enable sub-tab auto-rotation"}
+            style={{
+              background:  autoRotate ? "#001A0A" : "#0A0A16",
+              border:      `1px solid ${autoRotate ? "#00FF6640" : "#3A3A5040"}`,
+              color:       autoRotate ? "#00CC44" : "#3A3A52",
+              cursor:      "pointer",
+              padding:     "5px 10px",
+              display:     "flex",
+              alignItems:  "center",
+              gap:         6,
+              fontFamily:  "'JetBrains Mono',monospace",
+              fontSize:    8,
+              letterSpacing: "0.08em",
+            }}
+          >
+            <span style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: autoRotate ? "#00FF66" : "#3A3A52",
+              flexShrink: 0,
+              boxShadow: autoRotate ? "0 0 5px #00FF6680" : "none",
+            }} />
+            AUTO
+          </button>
 
           <button
             data-testid="unifi-refresh-btn"
