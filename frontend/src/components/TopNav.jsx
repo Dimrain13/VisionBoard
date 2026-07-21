@@ -3,7 +3,7 @@ import { NavLink } from "react-router-dom";
 import { format } from "date-fns";
 import {
   Activity, Map, ShieldAlert, Network, Wifi, CheckSquare, Terminal, Settings, GitBranch,
-  Clock, Pause, Play, RotateCw, Camera,
+  Clock, Pause, Play, RotateCw, Camera, MapPin,
 } from "lucide-react";
 
 const TABS = [
@@ -16,6 +16,7 @@ const TABS = [
   { path: "/tickets",       label: "TICKETS",        Icon: CheckSquare },
   { path: "/wug-topology",   label: "WUG",            Icon: GitBranch   },
   { path: "/wazuh",         label: "WAZUH",          Icon: Terminal    },
+  { path: "/locations",     label: "LOCATIONS",      Icon: MapPin      },
   { path: "/settings",      label: "SETTINGS",       Icon: Settings    },
 ];
 

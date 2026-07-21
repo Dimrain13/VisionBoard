@@ -12,6 +12,7 @@ import UniFiEvents from "./pages/UniFiEvents";
 import UniFiDevices from "./pages/UniFiDevices";
 import WUGTopology from "./pages/WUGDevices";
 import WazuhPage from "./pages/WazuhPage";
+import LocationsDashboard from "./pages/LocationsDashboard";
 import "./App.css";
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/unifi-devices" element={<UniFiDevices />} />
           <Route path="/wug-topology" element={<WUGTopology />} />
           <Route path="/wazuh" element={<WazuhPage />} />
+          <Route path="/locations" element={<LocationsDashboard />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>

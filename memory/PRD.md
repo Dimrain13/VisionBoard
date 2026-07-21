@@ -93,7 +93,18 @@ Create a dashboard in Python/React to display important IT information at a glan
 - **Demo data**: Realistic device counts (14–68 per site; genDevices helper)
 - **Live data**: Uses `/api/wug/topology`; parent_id from real WUG honored if provided
 
-### UniFi Page (UniFiDevices.jsx) — REDESIGNED 2026-07-16 (CSS layout 2026-07-15)
+### Locations Dashboard (LocationsDashboard.jsx) — ADDED 2026-07-21
+- New tab "LOCATIONS" added between WAZUH and SETTINGS in TopNav
+- Sub-tabs: [MAP OVERVIEW] + one tab per location (from circuits.yml)
+- **MAP OVERVIEW**: Michigan Lower-Peninsula SVG with colored dots per location (green=ok, amber=warning, red=critical), summary pills (total/ok/warning/critical), clickable location summary list
+- **Per-location dashboard** (non-IT friendly):
+  - RAG status banner (All Systems Operational / Minor Issues Detected / Critical Issue — IT Responding)
+  - INTERNET CIRCUITS: provider, circuit ID, bandwidth, live up/down status
+  - NETWORK DEVICES: online/offline count with visual bar (populated when UniFi site names match)
+  - OPEN REQUESTS: ticket list filtered by location name, priority badge, status
+  - ACTIVE ALERTS: alert chips from WUG (when WUG is connected)
+- **Backend `/api/locations/overview`**: aggregates circuits + tickets + UniFi + WUG per location with fuzzy name matching
+- Kiosk auto-cycle: MAP → loc[0] → ... → loc[n] → MAP every 9s, holds main kiosk timer via window.__kioskHoldPage
 - **Location sub-tabs**: [ALL SITES] + one tab per site (8 tabs for 8 locations)
 - **CSS hierarchy layout** (no SVG math): GW/FW card (large, centered) → Switch cards (flex row) → AP/CAM endpoint chips (flex-wrap under each switch)
   - Color-coded by type: purple=GW, green=SW, cyan=AP, amber=CAM, red=offline

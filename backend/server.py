@@ -1218,7 +1218,105 @@ async def delete_ticket(ticket_id: str):
     raise HTTPException(status_code=404, detail="Ticket not found")
 
 
-# ─── WUG (WhatsUp Gold) REST API ─────────────────────────────────────────────
+# ─── Locations Overview ──────────────────────────────────────────────────────
+
+def _loc_matches(loc_name: str, text: str) -> bool:
+    """True if location name has a meaningful match inside text (case-insensitive)."""
+    nm = loc_name.lower().strip()
+    txt = (text or "").lower()
+    if nm in txt:
+        return True
+    # Match significant words (>3 chars) — handles "Canton Plant" → "canton"
+    words = [w for w in nm.split() if len(w) > 3]
+    return bool(words and any(w in txt for w in words))
+
+
+@api_router.get("/locations/overview")
+async def locations_overview():
+    """Aggregate per-location status: circuits + tickets + UniFi devices + WUG alerts."""
+    circuits  = apply_ping_overlay(load_circuits())
+    tickets   = list(_vivantio_cache.get("tickets") or [])
+    unifi_dev = list(_unifi_cache.get("devices", []))
+    wug_alerts = list(_wug_data_cache.get("alerts", []))
+
+    # Build location map keyed on circuit site names (canonical source of locations)
+    loc_map: dict = {}
+    for c in circuits:
+        site = c.get("site", "").strip()
+        if not site:
+            continue
+        key = re.sub(r"\W+", "_", site.lower()).strip("_")
+        if key not in loc_map:
+            loc_map[key] = {
+                "id":       key,
+                "name":     site,
+                "circuits": [],
+                "tickets":  {"open": 0, "critical": 0, "items": []},
+                "network":  {"total": 0, "online": 0, "offline": 0},
+                "alerts":   [],
+                "status":   "ok",
+            }
+        loc_map[key]["circuits"].append({
+            "circuit_id":    c.get("circuit_id", ""),
+            "provider":      c.get("provider", ""),
+            "bandwidth_mbps": c.get("bandwidth_mbps", 0),
+            "status":        c.get("status", "unknown"),
+            "ip":            c.get("ip_address", ""),
+        })
+
+    # Match tickets → locations
+    for t in tickets:
+        t_text = " ".join(filter(None, [
+            t.get("title"), t.get("subject"), t.get("site"), t.get("description")
+        ]))
+        for loc in loc_map.values():
+            if _loc_matches(loc["name"], t_text):
+                loc["tickets"]["open"] += 1
+                if (t.get("priority") or "").lower() in ("critical", "high", "p1"):
+                    loc["tickets"]["critical"] += 1
+                if len(loc["tickets"]["items"]) < 5:
+                    loc["tickets"]["items"].append({
+                        "id":       t.get("id", ""),
+                        "title":    (t.get("title") or t.get("subject") or "")[:80],
+                        "status":   t.get("status", ""),
+                        "priority": t.get("priority", ""),
+                        "created":  t.get("created_at", ""),
+                    })
+
+    # Match UniFi devices → locations
+    for d in unifi_dev:
+        d_text = " ".join(filter(None, [d.get("site_name"), d.get("controller"), d.get("site_id")]))
+        for loc in loc_map.values():
+            if _loc_matches(loc["name"], d_text):
+                loc["network"]["total"]  += 1
+                if d.get("status") == "online":
+                    loc["network"]["online"]  += 1
+                else:
+                    loc["network"]["offline"] += 1
+
+    # Match WUG alerts → locations
+    for a in wug_alerts:
+        a_text = " ".join(filter(None, [a.get("location"), a.get("device"), a.get("ip")]))
+        for loc in loc_map.values():
+            if _loc_matches(loc["name"], a_text):
+                if len(loc["alerts"]) < 10:
+                    loc["alerts"].append(a)
+
+    # Compute RAG status
+    for loc in loc_map.values():
+        circuit_down    = any(c["status"] == "down"     for c in loc["circuits"])
+        circuit_degrade = any(c["status"] == "degraded" for c in loc["circuits"])
+        has_critical    = circuit_down or loc["tickets"]["critical"] > 0 or bool(loc["alerts"])
+        has_warning     = circuit_degrade or loc["network"]["offline"] > 0 or loc["tickets"]["open"] > 0
+        loc["status"]   = "critical" if has_critical else ("warning" if has_warning else "ok")
+
+    return {
+        "locations": list(loc_map.values()),
+        "updated":   datetime.now(timezone.utc).isoformat(),
+    }
+
+
+
 
 _wug_token_cache: dict = {}
 _wug_data_cache:  dict = {"topology": None, "alerts": [], "ts": 0.0}
