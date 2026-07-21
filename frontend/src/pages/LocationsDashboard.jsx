@@ -10,11 +10,11 @@
  *
  * Kiosk: MAP → loc[0] → … → MAP, holds main kiosk timer via window.__kioskHoldPage.
  */
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
   Bell, Wifi, WifiOff, Monitor, Ticket, Network,
-  CheckCircle, ShieldAlert, RefreshCw, AlertTriangle, Server,
+  CheckCircle, ShieldAlert, RefreshCw, Server,
 } from "lucide-react";
 import { formatDistanceToNowStrict, parseISO } from "date-fns";
 import MapEmbed from "../components/MapEmbed";
@@ -31,33 +31,7 @@ const SEV = {
 const PRI_COLOR = { critical: "#FF2A2A", high: "#FF6B14", medium: "#FFB014", low: "#3A3A48" };
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
-const STATUS_COLOR  = { ok: "#00FF66", warning: "#FFB014", critical: "#FF2A2A", unknown: "#3A3A52" };
-const STATUS_BG     = { ok: "#001A06", warning: "#1A0E00", critical: "#1A0000", unknown: "#0A0A10" };
-
-// ── Michigan map coords (480×520 SVG) ─────────────────────────────────────────
-const MICHIGAN_LP = `
-  M 96,499 L 72,478 L 48,452 L 32,420 L 26,382 L 24,342 L 28,302 L 40,262
-  L 56,228 L 76,198 L 98,170 L 120,148 L 148,124 L 176,100 L 206,78
-  L 236,62 L 258,52 L 278,58 L 308,72 L 332,96 L 352,132 L 368,174
-  L 382,222 L 372,268 L 344,302 L 322,320 L 336,334 L 358,322
-  L 400,258 L 438,298 L 448,352 L 440,404 L 418,442 L 410,476 L 392,499 Z
-`;
-const LOCATION_COORDS = {
-  "Novi":              { x: 362, y: 419 },
-  "Canton Plant":      { x: 362, y: 438 },
-  "Canton Warehouse":  { x: 352, y: 452 },
-  "Remus":             { x: 228, y: 304 },
-  "Mt. Pleasant":      { x: 256, y: 302 },
-  "Constantine":       { x: 184, y: 486 },
-  "Ovid":              { x: 290, y: 366 },
-  "Middlebury":        { x: 196, y: 472 },
-};
-function getCoords(name) {
-  if (LOCATION_COORDS[name]) return LOCATION_COORDS[name];
-  const fw = name.split(" ")[0].toLowerCase();
-  const k  = Object.keys(LOCATION_COORDS).find(k2 => k2.toLowerCase().startsWith(fw));
-  return k ? LOCATION_COORDS[k] : { x: 240, y: 300 };
-}
+const STATUS_COLOR = { ok: "#00FF66", warning: "#FFB014", critical: "#FF2A2A", unknown: "#3A3A52" };
 
 // ── KPI card (matches main Dashboard style) ────────────────────────────────────
 function KPICard({ label, value, sub, color = "#E2E2E5", Icon, glowColor, testId }) {
@@ -95,106 +69,6 @@ function KPICard({ label, value, sub, color = "#E2E2E5", Icon, glowColor, testId
           )}
         </div>
         {Icon && <Icon size={28} strokeWidth={1} style={{ color, opacity: 0.18, marginLeft: 10, flexShrink: 0 }} />}
-      </div>
-    </div>
-  );
-}
-
-// ── Michigan overview map ─────────────────────────────────────────────────────
-function MichiganMap({ locations, onSelectLocation }) {
-  const critical = locations.filter(l => l.status === "critical").length;
-  const warning  = locations.filter(l => l.status === "warning").length;
-  const ok       = locations.filter(l => l.status === "ok").length;
-
-  return (
-    <div style={{ display: "flex", gap: 18, height: "100%", overflow: "hidden" }}>
-      <div style={{
-        flex: "0 0 auto",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        background: "#030308", border: "1px solid #0C0C1C", padding: 12, position: "relative",
-      }}>
-        <svg viewBox="0 0 480 520" width={415} height={450} style={{ display: "block", overflow: "visible" }}>
-          <path d={MICHIGAN_LP} fill="#07070F" stroke="#1A3050" strokeWidth={1.5} />
-          {locations.map(loc => {
-            const { x, y } = getCoords(loc.name);
-            const col       = STATUS_COLOR[loc.status] || STATUS_COLOR.unknown;
-            return (
-              <g key={loc.id} style={{ cursor: "pointer" }} onClick={() => onSelectLocation(loc.id)}>
-                {loc.status === "critical" && (
-                  <circle cx={x} cy={y} r={14} fill="none" stroke="#FF2A2A" strokeWidth={1} opacity={0.4} />
-                )}
-                <circle cx={x} cy={y} r={7} fill={col} opacity={0.9}
-                  style={{ filter: `drop-shadow(0 0 5px ${col})` }} />
-                <text x={x + 11} y={y + 4} fontSize={9} fill={col} opacity={0.85}
-                  fontFamily="'JetBrains Mono',monospace" style={{ userSelect: "none" }}>
-                  {loc.name}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-        <div style={{
-          position: "absolute", bottom: 12, left: 14,
-          fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#1C2A3A", letterSpacing: "0.18em",
-        }}>
-          MICHIGAN OPERATIONS
-        </div>
-      </div>
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10, minWidth: 0, overflowY: "auto" }}>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          {[["SITES", locations.length, "#3A3A52"], ["OK", ok, "#00FF66"], ["WARNING", warning, "#FFB014"],
-            ["CRITICAL", critical, critical > 0 ? "#FF2A2A" : "#3A3A52"]].map(([l, v, c]) => (
-            <div key={l} style={{ background: "#06060F", border: `1px solid ${c}28`, padding: "8px 12px", flex: 1, textAlign: "center" }}>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 20, fontWeight: 700, color: c, lineHeight: 1 }}>{v}</div>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#252535", letterSpacing: "0.12em", marginTop: 3 }}>{l}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 5, overflowY: "auto" }}>
-          {locations.map(loc => {
-            const col        = STATUS_COLOR[loc.status] || STATUS_COLOR.unknown;
-            const circuitUp  = loc.circuits.filter(c => c.status === "up").length;
-            const circuitTot = loc.circuits.length;
-            return (
-              <button
-                key={loc.id}
-                data-testid={`loc-overview-${loc.id}`}
-                onClick={() => onSelectLocation(loc.id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  background: STATUS_BG[loc.status] || "#06060F",
-                  border: `1px solid ${col}28`, borderLeft: `3px solid ${col}`,
-                  padding: "9px 12px", cursor: "pointer", textAlign: "left", width: "100%",
-                }}
-              >
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: col, flexShrink: 0, boxShadow: `0 0 5px ${col}80` }} />
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, fontWeight: 700, color: "#D0D0D8", minWidth: 120, flexShrink: 0 }}>
-                  {loc.name.toUpperCase()}
-                </div>
-                <div style={{ flex: 1, fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: circuitUp < circuitTot ? "#FF4444" : "#00CC44" }}>
-                  INTERNET: {circuitUp}/{circuitTot} UP
-                </div>
-                {loc.network.total > 0 && (
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: loc.network.offline > 0 ? "#FF8844" : "#3A3A52" }}>
-                    {loc.network.offline > 0 ? `${loc.network.offline} DEV DOWN` : `${loc.network.total} DEVICES`}
-                  </div>
-                )}
-                {loc.tickets.open > 0 && (
-                  <div style={{
-                    fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5,
-                    color: loc.tickets.critical > 0 ? "#FF4444" : "#FFB014",
-                    background: loc.tickets.critical > 0 ? "#1A0000" : "#140C00",
-                    border: `1px solid ${loc.tickets.critical > 0 ? "#FF2A2A44" : "#FFB01444"}`,
-                    padding: "1px 7px", flexShrink: 0,
-                  }}>
-                    {loc.tickets.open} TICKET{loc.tickets.open !== 1 ? "S" : ""}
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
       </div>
     </div>
   );
@@ -489,9 +363,7 @@ export default function LocationsDashboard() {
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastFetch,  setLastFetch]  = useState(null);
-  const [activeTab,  setActiveTab]  = useState(null); // null = MAP
-
-  const locationsRef = useRef([]);
+  const [activeTab,  setActiveTab]  = useState(null); // null = first loc after load
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -501,7 +373,8 @@ export default function LocationsDashboard() {
         axios.get(`${API}/alerts`, { params: { acknowledged: false }, timeout: 8000 }),
       ]);
       setData(ov.data);
-      locationsRef.current = ov.data.locations || [];
+      // Auto-select the first location on first load
+      setActiveTab(prev => prev ?? (ov.data.locations?.[0]?.id ?? null));
       setAllAlerts(al.data.items || []);
     } catch (e) {
       console.warn("Locations load failed:", e);
@@ -521,7 +394,7 @@ export default function LocationsDashboard() {
   // No sub-tab auto-rotation on Locations — user navigates manually.
 
   const locations    = data?.locations || [];
-  const activeLocObj = activeTab ? locations.find(l => l.id === activeTab) : null;
+  const activeLocObj = locations.find(l => l.id === activeTab) ?? locations[0] ?? null;
 
   // Filter alerts for a specific location (by site name match)
   function alertsForLoc(locName) {
@@ -555,20 +428,6 @@ export default function LocationsDashboard() {
 
       {/* Sub-tab strip */}
       <div style={{ display: "flex", flexShrink: 0, borderBottom: "1px solid #0C0C1C", background: "#040408", overflowX: "auto" }}>
-        <button
-          data-testid="loc-tab-map"
-          onClick={() => setActiveTab(null)}
-          style={{
-            background: activeTab === null ? "#08081C" : "transparent",
-            border: "none", borderBottom: `2px solid ${activeTab === null ? "#0080CC" : "transparent"}`,
-            color: activeTab === null ? "#A0B8D0" : "#3A3A52",
-            padding: "8px 18px", cursor: "pointer", flexShrink: 0,
-            fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5,
-            fontWeight: activeTab === null ? 700 : 400, letterSpacing: "0.12em",
-          }}
-        >
-          MAP OVERVIEW
-        </button>
         {locations.map(loc => {
           const isActive = activeTab === loc.id;
           const col      = STATUS_COLOR[loc.status] || STATUS_COLOR.unknown;
@@ -600,8 +459,6 @@ export default function LocationsDashboard() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#252535", letterSpacing: "0.18em" }}>
             LOADING LOCATION DATA...
           </div>
-        ) : activeTab === null ? (
-          <MichiganMap locations={locations} onSelectLocation={id => setActiveTab(id)} />
         ) : activeLocObj ? (
           <LocationView key={activeLocObj.id} loc={activeLocObj} locAlerts={alertsForLoc(activeLocObj.name)} />
         ) : null}
