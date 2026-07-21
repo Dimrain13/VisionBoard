@@ -1,35 +1,41 @@
 /**
- * LocationsDashboard — Per-location status dashboard
+ * LocationsDashboard
  *
- * MAP tab:  Michigan SVG with colored status dots for each site
- * Site tabs: Non-IT-friendly dashboard per location
- *   - Overall RAG status badge
- *   - Internet circuits (is the internet up?)
- *   - Network health (devices online/offline)
- *   - Open tickets / requests
- *   - Active alerts
+ * MAP tab: Michigan overview with RAG dots per location.
  *
- * Kiosk: cycles MAP → site[0] → ... → site[n] → MAP
- *        holds main kiosk timer while cycling sub-tabs
+ * Per-location tab (mirrors main Dashboard):
+ *   Row 1 — 4 KPI cards (location-filtered, no IPs)
+ *   Row 2 — Left: Full SD-WAN mesh map  |  Right: Alerts + Network HW + Tickets
+ *   Row 3 — DIA circuit status strip (no IPs)
+ *
+ * Kiosk: MAP → loc[0] → … → MAP, holds main kiosk timer via window.__kioskHoldPage.
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
-import { RefreshCw, Wifi, WifiOff, Monitor, AlertTriangle, CheckCircle, Ticket } from "lucide-react";
+import {
+  Bell, Wifi, WifiOff, Monitor, Ticket, Network,
+  CheckCircle, ShieldAlert, RefreshCw, AlertTriangle, Server,
+} from "lucide-react";
+import { formatDistanceToNowStrict, parseISO } from "date-fns";
+import MapEmbed from "../components/MapEmbed";
 
 const API      = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const CYCLE_MS = 9000;
+const CYCLE_MS = 10000;
 
-// ── Status helpers ────────────────────────────────────────────────────────────
-const STATUS_COLOR  = { ok: "#00FF66", warning: "#FFB014", critical: "#FF2A2A", unknown: "#3A3A52" };
-const STATUS_BG     = { ok: "#001A06", warning: "#1A0E00", critical: "#1A0000", unknown: "#0A0A10" };
-const STATUS_LABEL  = {
-  ok:       "All Systems Operational",
-  warning:  "Minor Issues Detected",
-  critical: "Critical Issue — IT Responding",
-  unknown:  "Status Unknown",
+// ── Severity config ────────────────────────────────────────────────────────────
+const SEV = {
+  critical: { color: "#FF2A2A", label: "CRIT" },
+  warning:  { color: "#FFB014", label: "WARN" },
+  info:     { color: "#00E5FF", label: "INFO" },
 };
 
-// ── Michigan Lower-Peninsula SVG path (480×520 canvas, ~32 control points) ───
+const PRI_COLOR = { critical: "#FF2A2A", high: "#FF6B14", medium: "#FFB014", low: "#3A3A48" };
+
+// ── Status helpers ─────────────────────────────────────────────────────────────
+const STATUS_COLOR  = { ok: "#00FF66", warning: "#FFB014", critical: "#FF2A2A", unknown: "#3A3A52" };
+const STATUS_BG     = { ok: "#001A06", warning: "#1A0E00", critical: "#1A0000", unknown: "#0A0A10" };
+
+// ── Michigan map coords (480×520 SVG) ─────────────────────────────────────────
 const MICHIGAN_LP = `
   M 96,499 L 72,478 L 48,452 L 32,420 L 26,382 L 24,342 L 28,302 L 40,262
   L 56,228 L 76,198 L 98,170 L 120,148 L 148,124 L 176,100 L 206,78
@@ -37,9 +43,6 @@ const MICHIGAN_LP = `
   L 382,222 L 372,268 L 344,302 L 322,320 L 336,334 L 358,322
   L 400,258 L 438,298 L 448,352 L 440,404 L 418,442 L 410,476 L 392,499 Z
 `;
-
-// ── Approximate city coordinates on the 480×520 Michigan SVG canvas ───────────
-// Formula: x = (lon+88)/6*480,  y = (46.5−lat)/5*520
 const LOCATION_COORDS = {
   "Novi":              { x: 362, y: 419 },
   "Canton Plant":      { x: 362, y: 438 },
@@ -50,201 +53,141 @@ const LOCATION_COORDS = {
   "Ovid":              { x: 290, y: 366 },
   "Middlebury":        { x: 196, y: 472 },
 };
-
 function getCoords(name) {
   if (LOCATION_COORDS[name]) return LOCATION_COORDS[name];
-  // Fuzzy: first key that starts with the same first word
-  const firstWord = name.split(" ")[0].toLowerCase();
-  const match = Object.keys(LOCATION_COORDS).find(k => k.toLowerCase().startsWith(firstWord));
-  return match ? LOCATION_COORDS[match] : { x: 240, y: 300 };
+  const fw = name.split(" ")[0].toLowerCase();
+  const k  = Object.keys(LOCATION_COORDS).find(k2 => k2.toLowerCase().startsWith(fw));
+  return k ? LOCATION_COORDS[k] : { x: 240, y: 300 };
 }
 
-// ── Michigan Map overview ─────────────────────────────────────────────────────
+// ── KPI card (matches main Dashboard style) ────────────────────────────────────
+function KPICard({ label, value, sub, color = "#E2E2E5", Icon, glowColor, testId }) {
+  return (
+    <div
+      data-testid={testId}
+      className="card"
+      style={{ padding: "14px 18px", borderLeft: `2px solid ${color}` }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div style={{ flex: 1 }}>
+          <div className="section-label" style={{ marginBottom: 6 }}>{label}</div>
+          <div style={{
+            fontFamily: "'JetBrains Mono',monospace",
+            fontSize:   38,
+            fontWeight: 800,
+            color,
+            lineHeight: 1,
+            letterSpacing: "-0.04em",
+            textShadow: glowColor ? `0 0 18px ${glowColor}` : "none",
+          }}>
+            {value}
+          </div>
+          {sub && (
+            <div style={{
+              fontFamily:    "'JetBrains Mono',monospace",
+              fontSize:      9,
+              color:         "#3A3A48",
+              letterSpacing: "0.06em",
+              marginTop:     8,
+              textTransform: "uppercase",
+            }}>
+              {sub}
+            </div>
+          )}
+        </div>
+        {Icon && <Icon size={28} strokeWidth={1} style={{ color, opacity: 0.18, marginLeft: 10, flexShrink: 0 }} />}
+      </div>
+    </div>
+  );
+}
+
+// ── Michigan overview map ─────────────────────────────────────────────────────
 function MichiganMap({ locations, onSelectLocation }) {
   const critical = locations.filter(l => l.status === "critical").length;
   const warning  = locations.filter(l => l.status === "warning").length;
   const ok       = locations.filter(l => l.status === "ok").length;
 
   return (
-    <div style={{ display: "flex", gap: 20, height: "100%", overflow: "hidden" }}>
-      {/* SVG map */}
+    <div style={{ display: "flex", gap: 18, height: "100%", overflow: "hidden" }}>
       <div style={{
         flex: "0 0 auto",
-        position: "relative",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#030308",
-        border: "1px solid #0C0C1C",
-        padding: "12px",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "#030308", border: "1px solid #0C0C1C", padding: 12, position: "relative",
       }}>
-        <svg
-          viewBox="0 0 480 520"
-          width={420}
-          height={455}
-          style={{ display: "block", overflow: "visible" }}
-        >
-          {/* State fill */}
+        <svg viewBox="0 0 480 520" width={415} height={450} style={{ display: "block", overflow: "visible" }}>
           <path d={MICHIGAN_LP} fill="#07070F" stroke="#1A3050" strokeWidth={1.5} />
-
-          {/* Location dots */}
           {locations.map(loc => {
             const { x, y } = getCoords(loc.name);
             const col       = STATUS_COLOR[loc.status] || STATUS_COLOR.unknown;
-            const isDown    = loc.status === "critical";
-
             return (
-              <g
-                key={loc.id}
-                style={{ cursor: "pointer" }}
-                onClick={() => onSelectLocation(loc.id)}
-              >
-                {/* Pulse ring for critical */}
-                {isDown && (
-                  <circle cx={x} cy={y} r={14} fill="none" stroke="#FF2A2A" strokeWidth={1}
-                    opacity={0.4} />
+              <g key={loc.id} style={{ cursor: "pointer" }} onClick={() => onSelectLocation(loc.id)}>
+                {loc.status === "critical" && (
+                  <circle cx={x} cy={y} r={14} fill="none" stroke="#FF2A2A" strokeWidth={1} opacity={0.4} />
                 )}
-                {/* Main dot */}
                 <circle cx={x} cy={y} r={7} fill={col} opacity={0.9}
                   style={{ filter: `drop-shadow(0 0 5px ${col})` }} />
-                {/* Label */}
-                <text
-                  x={x + 11} y={y + 4}
-                  fontSize={9} fill={col} opacity={0.85}
-                  fontFamily="'JetBrains Mono',monospace"
-                  style={{ userSelect: "none" }}
-                >
+                <text x={x + 11} y={y + 4} fontSize={9} fill={col} opacity={0.85}
+                  fontFamily="'JetBrains Mono',monospace" style={{ userSelect: "none" }}>
                   {loc.name}
                 </text>
               </g>
             );
           })}
         </svg>
-
-        {/* Map title */}
         <div style={{
-          position: "absolute",
-          bottom: 14,
-          left: 16,
-          fontFamily: "'JetBrains Mono',monospace",
-          fontSize: 8,
-          color: "#1C2A3A",
-          letterSpacing: "0.18em",
+          position: "absolute", bottom: 12, left: 14,
+          fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#1C2A3A", letterSpacing: "0.18em",
         }}>
           MICHIGAN OPERATIONS
         </div>
       </div>
 
-      {/* Right: status summary + location list */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12, minWidth: 0, overflowY: "auto" }}>
-        {/* Summary pills */}
-        <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
-          {[
-            ["SITES",    locations.length, "#3A3A52"],
-            ["OK",       ok,               "#00FF66"],
-            ["WARNING",  warning,          "#FFB014"],
-            ["CRITICAL", critical,         critical > 0 ? "#FF2A2A" : "#3A3A52"],
-          ].map(([label, val, col]) => (
-            <div key={label} style={{
-              background: "#06060F",
-              border:     `1px solid ${col}28`,
-              padding:    "8px 16px",
-              flex:       1,
-              textAlign:  "center",
-            }}>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 700, color: col, lineHeight: 1 }}>
-                {val}
-              </div>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#252535", letterSpacing: "0.12em", marginTop: 3 }}>
-                {label}
-              </div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10, minWidth: 0, overflowY: "auto" }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          {[["SITES", locations.length, "#3A3A52"], ["OK", ok, "#00FF66"], ["WARNING", warning, "#FFB014"],
+            ["CRITICAL", critical, critical > 0 ? "#FF2A2A" : "#3A3A52"]].map(([l, v, c]) => (
+            <div key={l} style={{ background: "#06060F", border: `1px solid ${c}28`, padding: "8px 12px", flex: 1, textAlign: "center" }}>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 20, fontWeight: 700, color: c, lineHeight: 1 }}>{v}</div>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#252535", letterSpacing: "0.12em", marginTop: 3 }}>{l}</div>
             </div>
           ))}
         </div>
-
-        {/* Location cards */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, overflowY: "auto" }}>
           {locations.map(loc => {
             const col        = STATUS_COLOR[loc.status] || STATUS_COLOR.unknown;
             const circuitUp  = loc.circuits.filter(c => c.status === "up").length;
             const circuitTot = loc.circuits.length;
-            const netOffline = loc.network.offline;
-
             return (
               <button
                 key={loc.id}
                 data-testid={`loc-overview-${loc.id}`}
                 onClick={() => onSelectLocation(loc.id)}
                 style={{
-                  display:     "flex",
-                  alignItems:  "center",
-                  gap:         14,
-                  background:  STATUS_BG[loc.status] || "#06060F",
-                  border:      `1px solid ${col}28`,
-                  borderLeft:  `3px solid ${col}`,
-                  padding:     "10px 14px",
-                  cursor:      "pointer",
-                  textAlign:   "left",
-                  width:       "100%",
+                  display: "flex", alignItems: "center", gap: 12,
+                  background: STATUS_BG[loc.status] || "#06060F",
+                  border: `1px solid ${col}28`, borderLeft: `3px solid ${col}`,
+                  padding: "9px 12px", cursor: "pointer", textAlign: "left", width: "100%",
                 }}
               >
-                {/* Status dot */}
-                <div style={{
-                  width: 10, height: 10, borderRadius: "50%",
-                  background: col, flexShrink: 0,
-                  boxShadow: `0 0 6px ${col}80`,
-                }} />
-
-                {/* Location name */}
-                <div style={{
-                  fontFamily: "'JetBrains Mono',monospace",
-                  fontSize:   11,
-                  fontWeight: 700,
-                  color:      "#D0D0D8",
-                  minWidth:   130,
-                  flexShrink: 0,
-                }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: col, flexShrink: 0, boxShadow: `0 0 5px ${col}80` }} />
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, fontWeight: 700, color: "#D0D0D8", minWidth: 120, flexShrink: 0 }}>
                   {loc.name.toUpperCase()}
                 </div>
-
-                {/* Internet */}
-                <div style={{ display: "flex", alignItems: "center", gap: 5, flex: 1 }}>
-                  {circuitTot === 0 ? (
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5, color: "#3A3A52" }}>No circuits configured</span>
-                  ) : circuitUp === circuitTot ? (
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5, color: "#00CC44" }}>
-                      INTERNET: {circuitUp}/{circuitTot} UP
-                    </span>
-                  ) : (
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5, color: "#FF4444" }}>
-                      INTERNET: {circuitUp}/{circuitTot} UP
-                    </span>
-                  )}
+                <div style={{ flex: 1, fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: circuitUp < circuitTot ? "#FF4444" : "#00CC44" }}>
+                  INTERNET: {circuitUp}/{circuitTot} UP
                 </div>
-
-                {/* Network */}
                 {loc.network.total > 0 && (
-                  <div style={{
-                    fontFamily: "'JetBrains Mono',monospace",
-                    fontSize:   8.5,
-                    color:      netOffline > 0 ? "#FF8844" : "#3A3A52",
-                    minWidth:   100,
-                    textAlign:  "right",
-                  }}>
-                    {netOffline > 0 ? `${netOffline} DEVICE${netOffline !== 1 ? "S" : ""} DOWN` : `${loc.network.total} DEVICES OK`}
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: loc.network.offline > 0 ? "#FF8844" : "#3A3A52" }}>
+                    {loc.network.offline > 0 ? `${loc.network.offline} DEV DOWN` : `${loc.network.total} DEVICES`}
                   </div>
                 )}
-
-                {/* Tickets */}
                 {loc.tickets.open > 0 && (
                   <div style={{
-                    fontFamily: "'JetBrains Mono',monospace",
-                    fontSize:   8,
-                    color:      loc.tickets.critical > 0 ? "#FF4444" : "#FFB014",
+                    fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5,
+                    color: loc.tickets.critical > 0 ? "#FF4444" : "#FFB014",
                     background: loc.tickets.critical > 0 ? "#1A0000" : "#140C00",
-                    border:     `1px solid ${loc.tickets.critical > 0 ? "#FF2A2A44" : "#FFB01444"}`,
-                    padding:    "2px 8px",
-                    flexShrink: 0,
+                    border: `1px solid ${loc.tickets.critical > 0 ? "#FF2A2A44" : "#FFB01444"}`,
+                    padding: "1px 7px", flexShrink: 0,
                   }}>
                     {loc.tickets.open} TICKET{loc.tickets.open !== 1 ? "S" : ""}
                   </div>
@@ -258,441 +201,292 @@ function MichiganMap({ locations, onSelectLocation }) {
   );
 }
 
-// ── Circuit card ───────────────────────────────────────────────────────────────
-function CircuitCard({ circuit }) {
-  const isUp      = circuit.status === "up";
-  const isDown    = circuit.status === "down";
-  const col       = isDown ? "#FF2A2A" : isUp ? "#00FF66" : "#FFB014";
-  const bw        = circuit.bandwidth_mbps >= 1000
-    ? `${circuit.bandwidth_mbps / 1000} Gbps`
-    : `${circuit.bandwidth_mbps || "??"} Mbps`;
+// ── Device type label ──────────────────────────────────────────────────────────
+const DEV_TYPE_LABEL = {
+  gateway: "GATEWAY", firewall: "FIREWALL", switch: "SWITCH", poe_switch: "POE SWITCH",
+  access_point: "ACCESS POINT", camera: "CAMERA", device: "DEVICE",
+};
+const DEV_TYPE_COLOR = {
+  gateway: "#A78BFA", firewall: "#FF6B35", switch: "#00FF66", poe_switch: "#00CC55",
+  access_point: "#00E5FF", camera: "#FFB014", device: "#505068",
+};
 
-  return (
-    <div style={{
-      display:     "flex",
-      alignItems:  "center",
-      gap:         10,
-      background:  isDown ? "#0A0202" : "#050510",
-      border:      `1px solid ${col}28`,
-      borderLeft:  `3px solid ${col}`,
-      padding:     "10px 14px",
-      marginBottom: 6,
-    }}>
-      {isDown
-        ? <WifiOff size={16} style={{ color: col, flexShrink: 0 }} />
-        : <Wifi    size={16} style={{ color: col, flexShrink: 0 }} />
-      }
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontFamily: "'JetBrains Mono',monospace",
-          fontSize:   11,
-          fontWeight: 600,
-          color:      isDown ? "#FF8080" : "#C8C8D8",
-        }}>
-          {circuit.provider || "Unknown Provider"}
-        </div>
-        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#28385A", marginTop: 2 }}>
-          {circuit.circuit_id && `${circuit.circuit_id} · `}{bw}
-          {circuit.ip && ` · ${circuit.ip}`}
-        </div>
-      </div>
-      <div style={{
-        fontFamily:    "'JetBrains Mono',monospace",
-        fontSize:      10,
-        fontWeight:    700,
-        color:         col,
-        letterSpacing: "0.1em",
-        background:    `${col}18`,
-        border:        `1px solid ${col}44`,
-        padding:       "3px 10px",
-      }}>
-        {(circuit.status || "UNKNOWN").toUpperCase()}
-      </div>
-    </div>
-  );
-}
-
-// ── Ticket row ────────────────────────────────────────────────────────────────
-function TicketRow({ ticket }) {
-  const isCrit = (ticket.priority || "").toLowerCase() === "critical";
-  const col    = isCrit ? "#FF4444" : "#FFB014";
-
-  return (
-    <div style={{
-      display:      "flex",
-      alignItems:   "center",
-      gap:          10,
-      padding:      "7px 10px",
-      background:   isCrit ? "#0A0202" : "#060608",
-      borderBottom: "1px solid #0C0C18",
-    }}>
-      <div style={{
-        fontFamily:    "'JetBrains Mono',monospace",
-        fontSize:      7.5,
-        color:         col,
-        background:    `${col}18`,
-        border:        `1px solid ${col}44`,
-        padding:       "1px 6px",
-        flexShrink:    0,
-        letterSpacing: "0.08em",
-      }}>
-        {(ticket.priority || "OPEN").toUpperCase()}
-      </div>
-      <div style={{
-        fontFamily:   "'JetBrains Mono',monospace",
-        fontSize:     9.5,
-        color:        "#A0A0B8",
-        flex:         1,
-        overflow:     "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace:   "nowrap",
-      }}>
-        {ticket.title || "No title"}
-      </div>
-      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#28384A", flexShrink: 0 }}>
-        {ticket.status?.toUpperCase()}
-      </div>
-    </div>
-  );
-}
-
-// ── Per-location dashboard ────────────────────────────────────────────────────
-function LocationView({ loc }) {
-  const col       = STATUS_COLOR[loc.status] || STATUS_COLOR.unknown;
-  const circuitUp = loc.circuits.filter(c => c.status === "up").length;
-  const circuitTot= loc.circuits.length;
-  const allUp     = circuitUp === circuitTot && circuitTot > 0;
-  const anyDown   = loc.circuits.some(c => c.status === "down");
+// ── Per-location full dashboard (mirrors main Dashboard) ───────────────────────
+function LocationView({ loc, locAlerts }) {
+  const circuitUp  = loc.circuits.filter(c => c.status === "up").length;
+  const circuitTot = loc.circuits.length;
+  const circPct    = circuitTot > 0 ? ((circuitUp / circuitTot) * 100).toFixed(0) : 100;
+  const anyCircDown= loc.circuits.some(c => c.status === "down");
+  const netOffline = loc.network.offline;
+  const netOnline  = loc.network.online;
+  const netTotal   = loc.network.total;
 
   return (
     <div
       data-testid={`loc-dashboard-${loc.id}`}
-      style={{ display: "flex", flexDirection: "column", height: "100%", gap: 12, overflow: "hidden" }}
+      className="h-full flex flex-col gap-3"
+      style={{ background: "#0B0B0F", padding: "8px 0 0", overflow: "hidden" }}
     >
-      {/* Status banner */}
-      <div style={{
-        flexShrink:   0,
-        background:   STATUS_BG[loc.status],
-        border:       `1px solid ${col}28`,
-        borderLeft:   `4px solid ${col}`,
-        padding:      "12px 20px",
-        display:      "flex",
-        alignItems:   "center",
-        justifyContent: "space-between",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          {loc.status === "ok"
-            ? <CheckCircle   size={24} style={{ color: col }} />
-            : <AlertTriangle size={24} style={{ color: col }} />
-          }
-          <div>
-            <div style={{
-              fontFamily:    "'JetBrains Mono',monospace",
-              fontSize:      18,
-              fontWeight:    700,
-              color:         col,
-              letterSpacing: "0.12em",
-              lineHeight:    1,
-            }}>
-              {loc.name.toUpperCase()}
-            </div>
-            <div style={{
-              fontFamily:    "'JetBrains Mono',monospace",
-              fontSize:      10,
-              color:         `${col}AA`,
-              letterSpacing: "0.08em",
-              marginTop:     4,
-            }}>
-              {STATUS_LABEL[loc.status] || STATUS_LABEL.unknown}
-            </div>
-          </div>
-        </div>
-        {/* Quick stats */}
-        <div style={{ display: "flex", gap: 28 }}>
-          {[
-            ["CIRCUITS", circuitTot,         "#4060A0"],
-            ["ONLINE",   circuitUp,           "#00CC44"],
-            ["DEVICES",  loc.network.total,   "#4060A0"],
-            ["TICKETS",  loc.tickets.open,    loc.tickets.critical > 0 ? "#FF4444" : loc.tickets.open > 0 ? "#FFB014" : "#3A3A52"],
-          ].map(([label, val, c]) => (
-            <div key={label} style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 18, fontWeight: 700, color: c, lineHeight: 1 }}>{val}</div>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#252535", letterSpacing: "0.12em", marginTop: 2 }}>{label}</div>
-            </div>
-          ))}
-        </div>
+      {/* ── Row 1: KPI cards ──────────────────────────────────── */}
+      <div className="grid grid-cols-4 gap-3" style={{ flexShrink: 0 }}>
+        <KPICard
+          testId={`kpi-internet-${loc.id}`}
+          label="Internet Availability"
+          Icon={anyCircDown ? WifiOff : Wifi}
+          value={`${circPct}%`}
+          sub={anyCircDown
+            ? `${circuitTot - circuitUp} CIRCUIT${circuitTot - circuitUp !== 1 ? "S" : ""} DOWN`
+            : `ALL ${circuitTot} CIRCUIT${circuitTot !== 1 ? "S" : ""} UP`}
+          color={anyCircDown ? "#FF2A2A" : "#00FF66"}
+          glowColor={anyCircDown ? "#FF2A2A50" : null}
+        />
+        <KPICard
+          testId={`kpi-network-${loc.id}`}
+          label="Network Hardware"
+          Icon={Monitor}
+          value={netTotal || "—"}
+          sub={netTotal > 0
+            ? `${netOnline} ONLINE · ${netOffline} OFFLINE`
+            : "NO DEVICE DATA YET"}
+          color={netOffline > 0 ? "#FFB014" : netTotal > 0 ? "#00FF66" : "#3A3A48"}
+          glowColor={netOffline > 0 ? "#FFB01440" : null}
+        />
+        <KPICard
+          testId={`kpi-tickets-${loc.id}`}
+          label="Open Requests"
+          Icon={Ticket}
+          value={loc.tickets.open}
+          sub={loc.tickets.critical > 0
+            ? `${loc.tickets.critical} AT CRITICAL PRIORITY`
+            : loc.tickets.open > 0 ? "AWAITING RESOLUTION" : "NONE OPEN"}
+          color={loc.tickets.critical > 0 ? "#FF2A2A" : loc.tickets.open > 0 ? "#FFB014" : "#E2E2E5"}
+        />
+        <KPICard
+          testId={`kpi-alerts-${loc.id}`}
+          label="Active Alerts"
+          Icon={Bell}
+          value={locAlerts.length}
+          sub={locAlerts.filter(a => a.severity === "critical").length > 0
+            ? `${locAlerts.filter(a => a.severity === "critical").length} CRITICAL`
+            : locAlerts.length > 0 ? "MONITORING" : "ALL CLEAR"}
+          color={locAlerts.filter(a => a.severity === "critical").length > 0
+            ? "#FF2A2A"
+            : locAlerts.length > 0 ? "#FFB014" : "#00FF66"}
+          glowColor={locAlerts.filter(a => a.severity === "critical").length > 0 ? "#FF2A2A50" : null}
+        />
       </div>
 
-      {/* 3-column grid */}
-      <div style={{
-        flex:                1,
-        minHeight:           0,
-        display:             "grid",
-        gridTemplateColumns: "1fr 1fr 1fr",
-        gap:                 12,
-        overflow:            "hidden",
-      }}>
-        {/* Internet */}
-        <div style={{ display: "flex", flexDirection: "column", background: "#04040C", border: "1px solid #0C0C1C", overflow: "hidden" }}>
-          <div style={{
-            padding:      "8px 14px",
-            flexShrink:   0,
-            borderBottom: "1px solid #0C0C1C",
-            display:      "flex",
-            alignItems:   "center",
-            gap:          8,
-            background:   anyDown ? "#080404" : "#040410",
-          }}>
-            {anyDown
-              ? <WifiOff size={12} style={{ color: "#FF2A2A" }} />
-              : <Wifi    size={12} style={{ color: "#00CC44" }} />
-            }
-            <span style={{
-              fontFamily:    "'JetBrains Mono',monospace",
-              fontSize:      9,
-              fontWeight:    700,
-              color:         anyDown ? "#FF8080" : "#608090",
-              letterSpacing: "0.18em",
-            }}>
-              INTERNET CIRCUITS
+      {/* ── Row 2: Map + Right panels ─────────────────────────── */}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 10, minHeight: 0 }}>
+
+        {/* Left: Full mesh map */}
+        <div className="card flex flex-col" style={{ padding: 0, position: "relative", overflow: "hidden" }}>
+          <div
+            className="card-header"
+            style={{
+              position: "absolute", top: 0, left: 0, right: 0, zIndex: 10,
+              background: "rgba(15,15,20,0.88)", backdropFilter: "blur(4px)",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Network size={13} style={{ color: "#00E5FF" }} />
+              SD-WAN MESH — {loc.name.toUpperCase()}
             </span>
-          </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px" }}>
-            {loc.circuits.length === 0 ? (
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#252535", padding: 8 }}>
-                No circuits configured for this location
-              </div>
-            ) : (
-              loc.circuits.map((c, i) => <CircuitCard key={i} circuit={c} />)
-            )}
-          </div>
-          {/* Summary footer */}
-          {loc.circuits.length > 0 && (
-            <div style={{
-              padding:   "6px 14px",
-              flexShrink: 0,
-              borderTop: "1px solid #0C0C1C",
-              fontFamily: "'JetBrains Mono',monospace",
-              fontSize:  8,
-              color:     allUp ? "#00CC44" : "#FF4444",
-            }}>
-              {allUp ? `All ${circuitTot} circuit${circuitTot !== 1 ? "s" : ""} operational`
-                     : `${circuitTot - circuitUp} of ${circuitTot} circuits down`}
+            <div style={{ display: "flex", gap: 14 }}>
+              {[["#00FF66","ACTIVE"],["#FFB014","DEGRADED"],["#FF2A2A","OFFLINE"]].map(([c, l]) => (
+                <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 8.5, color: "#A1A1AA", letterSpacing: "0.1em" }}>
+                  <div style={{ width: 6, height: 6, background: c, boxShadow: `0 0 4px ${c}` }} /> {l}
+                </span>
+              ))}
             </div>
-          )}
+          </div>
+          <div style={{ flex: 1, background: "#030305" }}>
+            <MapEmbed />
+          </div>
         </div>
 
-        {/* Network */}
-        <div style={{ display: "flex", flexDirection: "column", background: "#04040C", border: "1px solid #0C0C1C", overflow: "hidden" }}>
-          <div style={{
-            padding:      "8px 14px",
-            flexShrink:   0,
-            borderBottom: "1px solid #0C0C1C",
-            display:      "flex",
-            alignItems:   "center",
-            gap:          8,
-            background:   loc.network.offline > 0 ? "#060410" : "#040410",
-          }}>
-            <Monitor size={12} style={{ color: loc.network.offline > 0 ? "#FF8844" : "#608090" }} />
-            <span style={{
-              fontFamily:    "'JetBrains Mono',monospace",
-              fontSize:      9,
-              fontWeight:    700,
-              color:         loc.network.offline > 0 ? "#FF8080" : "#608090",
-              letterSpacing: "0.18em",
-            }}>
-              NETWORK DEVICES
-            </span>
+        {/* Right column: Alerts + Network HW + Tickets */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
+
+          {/* Active Alerts */}
+          <div className="card flex flex-col" style={{ flex: 1.1, minHeight: 0 }}>
+            <div className="card-header">
+              <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <ShieldAlert size={13} style={{ color: "#FF2A2A" }} />
+                CRITICAL EVENTS
+              </span>
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#3A3A48" }}>
+                {loc.name.toUpperCase()}
+              </span>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {locAlerts.length === 0 ? (
+                <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.3, gap: 8 }}>
+                  <CheckCircle size={28} strokeWidth={1} />
+                  <div className="section-label">No Active Alerts</div>
+                </div>
+              ) : (
+                locAlerts.slice(0, 8).map(alert => {
+                  const cfg = SEV[alert.severity] || SEV.info;
+                  return (
+                    <div key={alert.id} style={{
+                      padding: "10px 14px",
+                      borderLeft: `3px solid ${cfg.color}`,
+                      borderBottom: "1px solid #1C1C24",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ color: cfg.color, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.1em" }}>{cfg.label}</span>
+                        <span style={{ color: "#3A3A48", fontSize: 8.5 }}>
+                          {alert.created_at
+                            ? formatDistanceToNowStrict(parseISO(alert.created_at)) + " AGO"
+                            : "ACTIVE"}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#FAFAFA", marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {alert.title}
+                      </div>
+                      <div style={{ fontSize: 8.5, color: "#A1A1AA" }}>
+                        {alert.device || "SYSTEM"}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 16, padding: 20 }}>
-            {loc.network.total === 0 ? (
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#252535", textAlign: "center" }}>
-                No device data available
+
+          {/* Network Hardware */}
+          <div className="card" style={{ flexShrink: 0, padding: "10px 14px" }}>
+            <div className="section-label" style={{ marginBottom: 8 }}>
+              <Server size={11} style={{ display: "inline", marginRight: 6, color: "#00FF66" }} />
+              NETWORK HARDWARE
+            </div>
+            {netTotal === 0 ? (
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#252535" }}>
+                Awaiting device sync…
               </div>
             ) : (
-              <>
-                {/* Big online indicator */}
-                <div style={{ textAlign: "center" }}>
-                  <div style={{
-                    fontFamily: "'JetBrains Mono',monospace",
-                    fontSize:   48,
-                    fontWeight: 700,
-                    lineHeight: 1,
-                    color:      loc.network.offline > 0 ? "#FF8844" : "#00FF66",
-                  }}>
-                    {loc.network.online}
+              <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                {[
+                  ["ONLINE",  netOnline,  "#00FF66"],
+                  ["OFFLINE", netOffline, netOffline > 0 ? "#FF4444" : "#252535"],
+                  ["TOTAL",   netTotal,   "#3A3A52"],
+                ].map(([l, v, c]) => (
+                  <div key={l} style={{ textAlign: "center" }}>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 700, color: c, lineHeight: 1 }}>{v}</div>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7, color: "#252535", letterSpacing: "0.1em", marginTop: 2 }}>{l}</div>
                   </div>
+                ))}
+                {/* Health bar */}
+                <div style={{ flex: 1, height: 5, background: "#0A0A16", borderRadius: 3, overflow: "hidden" }}>
                   <div style={{
-                    fontFamily:    "'JetBrains Mono',monospace",
-                    fontSize:      8,
-                    color:         "#252535",
-                    letterSpacing: "0.14em",
-                    marginTop:     4,
-                  }}>
-                    DEVICES ONLINE
-                  </div>
-                </div>
-                {/* Divider */}
-                <div style={{ width: 40, height: 1, background: "#1A1A28" }} />
-                {/* Offline */}
-                <div style={{ textAlign: "center" }}>
-                  <div style={{
-                    fontFamily: "'JetBrains Mono',monospace",
-                    fontSize:   28,
-                    fontWeight: 700,
-                    lineHeight: 1,
-                    color:      loc.network.offline > 0 ? "#FF4444" : "#1A1A28",
-                  }}>
-                    {loc.network.offline}
-                  </div>
-                  <div style={{
-                    fontFamily:    "'JetBrains Mono',monospace",
-                    fontSize:      8,
-                    color:         "#1A1A28",
-                    letterSpacing: "0.14em",
-                    marginTop:     2,
-                  }}>
-                    OFFLINE
-                  </div>
-                </div>
-                {/* Total bar */}
-                <div style={{ width: "80%", background: "#0A0A16", height: 6, borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{
-                    height:     "100%",
-                    width:      `${loc.network.total > 0 ? (loc.network.online / loc.network.total) * 100 : 0}%`,
-                    background: loc.network.offline > 0 ? "#FF8844" : "#00FF66",
+                    height: "100%",
+                    width: `${netTotal > 0 ? (netOnline / netTotal) * 100 : 0}%`,
+                    background: netOffline > 0 ? "#FF8844" : "#00FF66",
                     borderRadius: 3,
                   }} />
                 </div>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#28384A" }}>
-                  {loc.network.total} TOTAL DEVICES
-                </div>
-              </>
+              </div>
             )}
           </div>
-        </div>
 
-        {/* Tickets */}
-        <div style={{ display: "flex", flexDirection: "column", background: "#04040C", border: "1px solid #0C0C1C", overflow: "hidden" }}>
-          <div style={{
-            padding:      "8px 14px",
-            flexShrink:   0,
-            borderBottom: "1px solid #0C0C1C",
-            display:      "flex",
-            alignItems:   "center",
-            justifyContent: "space-between",
-            background:   loc.tickets.critical > 0 ? "#080404" : "#040410",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Ticket size={12} style={{ color: loc.tickets.critical > 0 ? "#FF4444" : "#608090" }} />
-              <span style={{
-                fontFamily:    "'JetBrains Mono',monospace",
-                fontSize:      9,
-                fontWeight:    700,
-                color:         loc.tickets.critical > 0 ? "#FF8080" : "#608090",
-                letterSpacing: "0.18em",
-              }}>
+          {/* Open Tickets */}
+          <div className="card flex flex-col" style={{ flex: 0.9, minHeight: 0 }}>
+            <div className="card-header">
+              <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <Ticket size={13} style={{ color: loc.tickets.critical > 0 ? "#FF4444" : "#3A3A52" }} />
                 OPEN REQUESTS
               </span>
+              {loc.tickets.open > 0 && (
+                <span style={{
+                  fontFamily: "'JetBrains Mono',monospace", fontSize: 9, fontWeight: 700,
+                  color: loc.tickets.critical > 0 ? "#FF4444" : "#FFB014",
+                  background: loc.tickets.critical > 0 ? "#180404" : "#140C00",
+                  border: `1px solid ${loc.tickets.critical > 0 ? "#FF2A2A44" : "#FFB01444"}`,
+                  padding: "1px 8px",
+                }}>
+                  {loc.tickets.open}
+                </span>
+              )}
             </div>
-            {loc.tickets.open > 0 && (
-              <span style={{
-                fontFamily: "'JetBrains Mono',monospace",
-                fontSize:   9,
-                fontWeight: 700,
-                color:      loc.tickets.critical > 0 ? "#FF4444" : "#FFB014",
-                background: loc.tickets.critical > 0 ? "#180404" : "#140C00",
-                border:     `1px solid ${loc.tickets.critical > 0 ? "#FF2A2A44" : "#FFB01444"}`,
-                padding:    "2px 8px",
-              }}>
-                {loc.tickets.open}
-              </span>
-            )}
-          </div>
-          <div style={{ flex: 1, overflowY: "auto" }}>
-            {loc.tickets.items.length === 0 ? (
-              <div style={{
-                display:    "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                height:     "100%",
-                gap:        8,
-                padding:    20,
-              }}>
-                <CheckCircle size={28} style={{ color: "#00FF6640" }} />
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#252535", textAlign: "center" }}>
-                  No open requests
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {loc.tickets.items.length === 0 ? (
+                <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.3, gap: 8 }}>
+                  <CheckCircle size={24} strokeWidth={1} />
+                  <div className="section-label" style={{ fontSize: 8 }}>No Open Requests</div>
                 </div>
-              </div>
-            ) : (
-              loc.tickets.items.map((t, i) => <TicketRow key={i} ticket={t} />)
-            )}
-          </div>
-          {loc.tickets.items.length > 0 && (
-            <div style={{
-              padding:    "6px 14px",
-              flexShrink: 0,
-              borderTop:  "1px solid #0C0C1C",
-              fontFamily: "'JetBrains Mono',monospace",
-              fontSize:   8,
-              color:      loc.tickets.critical > 0 ? "#FF4444" : "#252535",
-            }}>
-              {loc.tickets.critical > 0
-                ? `${loc.tickets.critical} critical — IT notified`
-                : `${loc.tickets.open} open request${loc.tickets.open !== 1 ? "s" : ""}`
-              }
+              ) : (
+                loc.tickets.items.map((t, i) => {
+                  const priCol = PRI_COLOR[(t.priority || "low").toLowerCase()] || "#3A3A48";
+                  return (
+                    <div key={i} style={{ padding: "9px 14px", borderBottom: "1px solid #1C1C24", borderLeft: `3px solid ${priCol}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                        <span style={{ color: priCol, fontSize: 9, fontWeight: 700, letterSpacing: "0.1em" }}>
+                          {(t.priority || "OPEN").toUpperCase()}
+                        </span>
+                        <span style={{ color: "#3A3A48", fontSize: 8.5 }}>{(t.status || "").toUpperCase()}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#C8C8D4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {t.title || "No title"}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
-      {/* Active alerts row */}
-      {loc.alerts.length > 0 && (
-        <div style={{
-          flexShrink:   0,
-          background:   "#0A0202",
-          border:       "1px solid #FF2A2A28",
-          borderLeft:   "3px solid #FF2A2A",
-          padding:      "8px 14px",
-          display:      "flex",
-          alignItems:   "center",
-          gap:          14,
-          overflowX:    "auto",
-        }}>
-          <AlertTriangle size={14} style={{ color: "#FF4444", flexShrink: 0 }} />
-          <span style={{
-            fontFamily:    "'JetBrains Mono',monospace",
-            fontSize:      8.5,
-            color:         "#FF6666",
-            letterSpacing: "0.12em",
-            flexShrink:    0,
-          }}>
-            ACTIVE ALERTS:
-          </span>
-          {loc.alerts.slice(0, 5).map((a, i) => (
-            <span key={i} style={{
-              fontFamily:    "'JetBrains Mono',monospace",
-              fontSize:      8.5,
-              color:         "#FF8888",
-              background:    "#180404",
-              border:        "1px solid #FF2A2A33",
-              padding:       "2px 10px",
-              flexShrink:    0,
-              whiteSpace:    "nowrap",
-            }}>
-              {a.device || a.ip || "Unknown"}
-            </span>
-          ))}
+      {/* ── Row 3: Circuit status strip (no IPs) ─────────────── */}
+      <div className="card" style={{ height: 68, flexShrink: 0, padding: "10px 16px", overflow: "hidden" }}>
+        <div className="section-label" style={{ marginBottom: 8 }}>
+          DIA CIRCUITS — {loc.name.toUpperCase()}
         </div>
-      )}
+        <div style={{ display: "flex", gap: 24, overflowX: "auto" }}>
+          {loc.circuits.length === 0 ? (
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#252535" }}>No circuits configured</span>
+          ) : (
+            loc.circuits.map((c, i) => {
+              const isUp = c.status === "up";
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: "50%",
+                    background: isUp ? "#00FF66" : "#FF2A2A",
+                    boxShadow: `0 0 4px ${isUp ? "#00FF66" : "#FF2A2A"}`,
+                  }} />
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: isUp ? "#E2E2E5" : "#FF2A2A" }}>
+                    {c.provider || "Unknown"}
+                  </span>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#3A3A48" }}>
+                    {c.bandwidth_mbps >= 1000
+                      ? `${(c.bandwidth_mbps / 1000).toFixed(0)}G`
+                      : `${c.bandwidth_mbps || "?"}M`}
+                  </span>
+                  <span style={{
+                    fontFamily: "'JetBrains Mono',monospace", fontSize: 8, fontWeight: 700,
+                    color: isUp ? "#00FF66" : "#FF2A2A",
+                    background: isUp ? "#001A0A" : "#1A0000",
+                    border: `1px solid ${isUp ? "#00FF6633" : "#FF2A2A33"}`,
+                    padding: "1px 6px",
+                  }}>
+                    {(c.status || "UNKNOWN").toUpperCase()}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Main LocationsDashboard page ───────────────────────────────────────────────
 export default function LocationsDashboard() {
   const [data,       setData]       = useState(null);
+  const [allAlerts,  setAllAlerts]  = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastFetch,  setLastFetch]  = useState(null);
@@ -703,11 +497,15 @@ export default function LocationsDashboard() {
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const res = await axios.get(`${API}/locations/overview`, { timeout: 12000 });
-      setData(res.data);
-      locationsRef.current = res.data.locations || [];
+      const [ov, al] = await Promise.all([
+        axios.get(`${API}/locations/overview`,          { timeout: 12000 }),
+        axios.get(`${API}/alerts`, { params: { acknowledged: false }, timeout: 8000 }),
+      ]);
+      setData(ov.data);
+      locationsRef.current = ov.data.locations || [];
+      setAllAlerts(al.data.items || []);
     } catch (e) {
-      console.warn("Locations overview fetch failed:", e);
+      console.warn("Locations load failed:", e);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -721,7 +519,7 @@ export default function LocationsDashboard() {
     return () => clearInterval(iv);
   }, [load]);
 
-  // Kiosk auto-cycle: MAP → loc[0] → ... → loc[n] → MAP
+  // Kiosk: MAP → loc[0] → … → MAP, hold main kiosk timer during cycle
   useEffect(() => {
     const iv = setInterval(() => {
       setActiveTab(prev => {
@@ -729,12 +527,8 @@ export default function LocationsDashboard() {
         const order = [null, ...locs.map(l => l.id)];
         const idx   = order.indexOf(prev);
         const next  = order[(idx + 1) % order.length];
-
-        if (next === null) {
-          if (window.__kioskHoldPage) window.__kioskHoldPage(false);
-        } else if (prev === null) {
-          if (window.__kioskHoldPage) window.__kioskHoldPage(true);
-        }
+        if (next === null && window.__kioskHoldPage) window.__kioskHoldPage(false);
+        else if (prev === null && window.__kioskHoldPage) window.__kioskHoldPage(true);
         return next;
       });
     }, CYCLE_MS);
@@ -744,51 +538,32 @@ export default function LocationsDashboard() {
     };
   }, []);
 
-  const locations   = data?.locations || [];
+  const locations    = data?.locations || [];
   const activeLocObj = activeTab ? locations.find(l => l.id === activeTab) : null;
+
+  // Filter alerts for a specific location (by site name match)
+  function alertsForLoc(locName) {
+    const nm = locName.toLowerCase();
+    return allAlerts.filter(a => {
+      const t = ((a.site || "") + " " + (a.device || "") + " " + (a.title || "")).toLowerCase();
+      return t.includes(nm) || nm.split(" ").some(w => w.length > 3 && t.includes(w));
+    });
+  }
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
 
       {/* Page header */}
-      <div style={{
-        display:        "flex",
-        alignItems:     "center",
-        justifyContent: "space-between",
-        flexShrink:     0,
-        paddingBottom:  8,
-      }}>
-        <h1 style={{
-          fontFamily:    "'JetBrains Mono',monospace",
-          fontSize:      13,
-          fontWeight:    700,
-          color:         "#E2E2E5",
-          letterSpacing: "0.18em",
-          margin:        0,
-        }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, paddingBottom: 8 }}>
+        <h1 style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700, color: "#E2E2E5", letterSpacing: "0.18em", margin: 0 }}>
           LOCATION STATUS
         </h1>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          {lastFetch && (
-            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#28283A" }}>
-              {lastFetch.toLocaleTimeString()}
-            </span>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {lastFetch && <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 7.5, color: "#28283A" }}>{lastFetch.toLocaleTimeString()}</span>}
           <button
             data-testid="locations-refresh-btn"
             onClick={() => load(true)}
-            style={{
-              background: "transparent",
-              border:     "1px solid #1C1C2A",
-              color:      "#3A3A50",
-              cursor:     "pointer",
-              padding:    "5px 10px",
-              display:    "flex",
-              alignItems: "center",
-              gap:        6,
-              fontFamily: "'JetBrains Mono',monospace",
-              fontSize:   8,
-            }}
+            style={{ background: "transparent", border: "1px solid #1C1C2A", color: "#3A3A50", cursor: "pointer", padding: "5px 10px", display: "flex", alignItems: "center", gap: 6, fontFamily: "'JetBrains Mono',monospace", fontSize: 8 }}
           >
             <RefreshCw size={10} style={{ animation: (loading || refreshing) ? "spin 1s linear infinite" : "none" }} />
             REFRESH
@@ -797,71 +572,40 @@ export default function LocationsDashboard() {
       </div>
 
       {/* Sub-tab strip */}
-      <div style={{
-        display:      "flex",
-        flexShrink:   0,
-        borderBottom: "1px solid #0C0C1C",
-        background:   "#040408",
-        overflowX:    "auto",
-      }}>
-        {/* MAP tab */}
+      <div style={{ display: "flex", flexShrink: 0, borderBottom: "1px solid #0C0C1C", background: "#040408", overflowX: "auto" }}>
         <button
           data-testid="loc-tab-map"
           onClick={() => setActiveTab(null)}
           style={{
-            background:  activeTab === null ? "#08081C" : "transparent",
-            border:      "none",
-            borderBottom:`2px solid ${activeTab === null ? "#0080CC" : "transparent"}`,
-            color:       activeTab === null ? "#A0B8D0" : "#3A3A52",
-            padding:     "8px 18px",
-            cursor:      "pointer",
-            flexShrink:  0,
-            fontFamily:  "'JetBrains Mono',monospace",
-            fontSize:    9.5,
-            fontWeight:  activeTab === null ? 700 : 400,
-            letterSpacing: "0.12em",
+            background: activeTab === null ? "#08081C" : "transparent",
+            border: "none", borderBottom: `2px solid ${activeTab === null ? "#0080CC" : "transparent"}`,
+            color: activeTab === null ? "#A0B8D0" : "#3A3A52",
+            padding: "8px 18px", cursor: "pointer", flexShrink: 0,
+            fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5,
+            fontWeight: activeTab === null ? 700 : 400, letterSpacing: "0.12em",
           }}
         >
           MAP OVERVIEW
         </button>
-
         {locations.map(loc => {
           const isActive = activeTab === loc.id;
           const col      = STATUS_COLOR[loc.status] || STATUS_COLOR.unknown;
-          const hasCrit  = loc.status === "critical";
-          const hasWarn  = loc.status === "warning";
-
           return (
             <button
               key={loc.id}
               data-testid={`loc-tab-${loc.id}`}
               onClick={() => setActiveTab(loc.id)}
               style={{
-                background:  isActive ? "#08081C" : "transparent",
-                border:      "none",
-                borderBottom:`2px solid ${isActive ? col : "transparent"}`,
-                color:       isActive ? (hasCrit ? "#FF8080" : hasWarn ? "#FFD070" : "#A0B8D0") : "#3A3A52",
-                padding:     "8px 18px",
-                cursor:      "pointer",
-                flexShrink:  0,
-                fontFamily:  "'JetBrains Mono',monospace",
-                fontSize:    9.5,
-                fontWeight:  isActive ? 700 : 400,
-                letterSpacing: "0.12em",
-                display:     "flex",
-                alignItems:  "center",
-                gap:         7,
-                whiteSpace:  "nowrap",
+                background: isActive ? "#08081C" : "transparent",
+                border: "none", borderBottom: `2px solid ${isActive ? col : "transparent"}`,
+                color: isActive ? (loc.status === "critical" ? "#FF8080" : loc.status === "warning" ? "#FFD070" : "#A0B8D0") : "#3A3A52",
+                padding: "8px 18px", cursor: "pointer", flexShrink: 0,
+                fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5,
+                fontWeight: isActive ? 700 : 400, letterSpacing: "0.12em",
+                display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap",
               }}
             >
-              <div style={{
-                width:       6,
-                height:      6,
-                borderRadius:"50%",
-                background:  col,
-                flexShrink:  0,
-                boxShadow:   `0 0 4px ${col}80`,
-              }} />
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: col, flexShrink: 0, boxShadow: `0 0 4px ${col}80` }} />
               {loc.name.toUpperCase()}
             </button>
           );
@@ -869,21 +613,15 @@ export default function LocationsDashboard() {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingTop: 10 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingTop: 8 }}>
         {loading ? (
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
-            fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#252535", letterSpacing: "0.18em",
-          }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#252535", letterSpacing: "0.18em" }}>
             LOADING LOCATION DATA...
           </div>
         ) : activeTab === null ? (
-          <MichiganMap
-            locations={locations}
-            onSelectLocation={id => setActiveTab(id)}
-          />
+          <MichiganMap locations={locations} onSelectLocation={id => setActiveTab(id)} />
         ) : activeLocObj ? (
-          <LocationView key={activeLocObj.id} loc={activeLocObj} />
+          <LocationView key={activeLocObj.id} loc={activeLocObj} locAlerts={alertsForLoc(activeLocObj.name)} />
         ) : null}
       </div>
     </div>
